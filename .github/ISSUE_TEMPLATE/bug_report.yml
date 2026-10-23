@@ -40,8 +40,8 @@ body:
     id: logs
     attributes:
       label: Logs
-      placeholder: Please drag and drop complete log file from ``%APPDATA%\GHelper\log.txt``
-      description: Please drag and drop complete log file from ``%APPDATA%\GHelper\log.txt``
+      placeholder: Please drag and drop complete log file from ``%APPDATA%\YALM\log.txt``
+      description: Please drag and drop complete log file from ``%APPDATA%\YALM\log.txt``
     validations:
       required: true
   - type: input

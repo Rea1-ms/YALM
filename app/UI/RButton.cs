@@ -106,7 +106,9 @@ namespace GHelper.UI
         protected override void OnPaint(PaintEventArgs pevent)
         {
 
-            base.OnPaint(pevent);
+            bool drawDisabledText = !Enabled && ForeColor != SystemColors.ControlText && Image is null;
+            if (!drawDisabledText)
+                base.OnPaint(pevent);
 
             float ratio = pevent.Graphics.DpiX / 192.0f;
             int border = (int)Math.Round((ratio * borderSize - 1) / 2) * 2 + 1;
@@ -119,6 +121,15 @@ namespace GHelper.UI
             {
                 pevent.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 Region = new Region(pathSurface);
+
+                // The native button already paints one text pass. For plain disabled
+                // buttons, clear the surface and draw the gray text exactly once.
+                if (drawDisabledText)
+                {
+                    using (var brush = new SolidBrush(BackColor))
+                        pevent.Graphics.FillPath(brush, pathSurface);
+                }
+
                 pevent.Graphics.DrawPath(penSurface, pathSurface);
 
                 bool drawActive = Enabled && !Borderless && activated && borderColor.A > 0;
@@ -157,23 +168,10 @@ namespace GHelper.UI
                 }
             }
 
-            if (!Enabled && ForeColor != SystemColors.ControlText)
+            if (drawDisabledText)
             {
-                var rect = pevent.ClipRectangle;
-                if (Image is not null)
-                {
-                    rect.Y += Image.Height;
-                    rect.Height -= Image.Height;
-                }
-                else
-                {
-                    using (var brush = new SolidBrush(Parent.BackColor))
-                        pevent.Graphics.FillRectangle(brush, rect);
-                    using (var brush = new SolidBrush(BackColor))
-                        pevent.Graphics.FillRectangle(brush, rect);
-                }
                 TextFormatFlags flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak;
-                TextRenderer.DrawText(pevent.Graphics, Text, Font, rect, Color.Gray, flags);
+                TextRenderer.DrawText(pevent.Graphics, Text, Font, rectSurface, Color.Gray, flags);
             }
 
             if (!Enabled && !Borderless && activated && borderColor.A > 0)

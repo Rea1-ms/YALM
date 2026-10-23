@@ -26,21 +26,54 @@ public static class AppConfig
 
     static AppConfig()
     {
-        string configName = "config.json";
-        string appPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GHelper");
+        string configName = "yalm.json";
+        string appPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YALM");
         string startupConfig = Path.Combine(Application.StartupPath.Trim('\\'), configName);
 
-        fallbackConfigFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GHelper", configName);
+        fallbackConfigFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "YALM", configName);
 
         configFile = File.Exists(startupConfig) ? startupConfig
         : ProcessHelper.IsRunningAsSystem() && File.Exists(fallbackConfigFile) ? fallbackConfigFile
         : Path.Combine(appPath, configName);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(configFile));
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(configFile)!);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A read-only/demo run must still be able to open the panel. Keep
+            // the fallback local and never reuse the original G-Helper file.
+            configFile = Path.Combine(Path.GetTempPath(), "YALM", configName);
+            fallbackConfigFile = configFile;
+            Directory.CreateDirectory(Path.GetDirectoryName(configFile)!);
+        }
 
-        if (!TryLoadConfig(configFile) && !TryRecoverConfig(configFile) && !TryLoadConfig(configFile + ".bak") && !TryLoadConfig(fallbackConfigFile)) Init();
+        if (!TryLoadConfig(configFile) && !TryRecoverConfig(configFile) && !TryLoadConfig(configFile + ".bak") && !TryLoadConfig(fallbackConfigFile)
+            && !TryMigrateLegacyConfig()) Init();
 
         timer.Elapsed += Timer_Elapsed;
+    }
+
+    private static bool TryMigrateLegacyConfig()
+    {
+        // Keep the source file intact and never replace an existing YALM config.
+        if (File.Exists(configFile)) return false;
+        string[] legacyPaths =
+        [
+            Path.Combine(Application.StartupPath, "mhelper.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MHelper", "mhelper.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "MHelper", "mhelper.json")
+        ];
+        foreach (string legacyPath in legacyPaths)
+        {
+            if (!TryLoadConfig(legacyPath)) continue;
+            try { File.WriteAllText(configFile, JsonSerializer.Serialize(config)); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return true;
+        }
+        return false;
     }
 
     private static bool TryLoadConfig(string path)
@@ -48,7 +81,9 @@ public static class AppConfig
         if (!File.Exists(path)) return false;
         try
         {
-            config = JsonSerializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(path), LenientOptions);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(path), LenientOptions);
+            if (loaded is null) return false;
+            config = loaded;
             Logger.WriteLine($"Config loaded from {path}");
             return true;
         }

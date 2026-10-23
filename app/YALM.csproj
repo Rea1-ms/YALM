@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,18 +8,23 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPublishable>True</IsPublishable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <StartupObject>GHelper.Program</StartupObject>
+    <StartupObject>YALM.Mechrevo.MechrevoProgram</StartupObject>
     <ApplicationIcon>favicon.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <Platform>x64</Platform>
-    <AssemblyName>GHelper</AssemblyName>
+    <AssemblyName>YALM</AssemblyName>
+    <RootNamespace>GHelper</RootNamespace>
+    <Product>YALM</Product>
+    <AssemblyTitle>YALM</AssemblyTitle>
+    <Description>机械革命性能模式与风扇状态工具，基于 G-Helper。</Description>
     <PlatformTarget>x64</PlatformTarget>
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
     <DebugType>embedded</DebugType>
     <OutputPath>bin\x64\$(Configuration)\</OutputPath>
     <IntermediateOutputPath>obj\x64\$(Configuration)\</IntermediateOutputPath>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
-    <AssemblyVersion>0.289</AssemblyVersion>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <Version>0.1.0</Version>
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
   </PropertyGroup>
 
@@ -44,6 +49,7 @@
     <PackageReference Include="System.Management" Version="10.0.12" />
     <PackageReference Include="TaskScheduler" Version="2.12.2" />
     <PackageReference Include="WinForms.DataVisualization" Version="1.10.2" />
+    <PackageReference Include="MQTTnet" Version="5.2.0.1603" />
   </ItemGroup>
 
   <ItemGroup>
@@ -80,11 +86,5 @@
     </EmbeddedResource>
   </ItemGroup>
 
-	<Target Name="KillRunningGHelper" BeforeTargets="Build" Condition="'$(GITHUB_ACTIONS)'!='true'">
-		<Exec Command="powershell -NoProfile -Command &quot;try { [System.Threading.EventWaitHandle]::OpenExisting('Global\GHelperApp-Exit').Set() } catch {}; for ($i = 0; $i -lt 50; $i++) { if (-not (Get-Process -Name GHelper -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 100 }&quot;" />
-	</Target>
-
-	<Target Name="ZipSingleExe" AfterTargets="Publish" Condition="'$(GITHUB_ACTIONS)'!='true'">
-		<Exec Command="powershell -NoProfile -Command &quot;$exe = '$(PublishDir)GHelper.exe'; for ($i = 0; $i -lt 30; $i++) { try { [IO.File]::Open($exe, 'Open', 'Read', 'None').Close(); break } catch { Start-Sleep -Milliseconds 200 } }; Compress-Archive -Path $exe -DestinationPath '$(PublishDir)GHelper.zip' -Force&quot;" />
-	</Target>
+  <!-- 构建、发布不停止任何正在运行的控制台，也不调用外部脚本。 -->
 </Project>
