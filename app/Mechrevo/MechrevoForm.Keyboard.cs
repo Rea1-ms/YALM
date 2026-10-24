@@ -9,9 +9,11 @@ internal sealed partial class MechrevoForm
 {
     private readonly RComboBox _keyboardEffect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly RButton _keyboardMore = Button("更多", colorGray);
+    private readonly RColorButton _keyboardColor = new() { Text = "颜色", BorderRadius = 2 };
+    private readonly Label _keyboardStatus = TextLabel(string.Empty);
     private readonly RButton _fnLock = Button("FN-Lock", colorStandard);
     private readonly RButton _overlayButton = Button("屏幕叠加", colorEco);
-    private KeyboardSettingsForm? _keyboardForm;
+    private MoreSettingsForm? _settingsForm;
     private OverlayConfig? _overlayConfig;
     private HardwareOverlay? _hardwareOverlay;
     private bool _keyboardBusy;
@@ -29,18 +31,19 @@ internal sealed partial class MechrevoForm
         var title = TextLabel("笔记本键盘");
         title.Font = new Font(Font, FontStyle.Bold);
         var heading = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = Padding.Empty };
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 75));
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 75));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 200F / 3));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F / 3));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F / 3));
         heading.Controls.Add(MechrevoUi.Heading(this, title, GHelper.Properties.Resources.icons8_keyboard_32), 0, 0);
         foreach (RButton button in new[] { _overlayButton, _fnLock })
         {
-            button.Height = 23;
+            button.Height = 20;
             button.Font = new Font("Segoe UI", 7.125F, FontStyle.Bold);
             button.Secondary = true;
             button.Borderless = true;
             button.BorderRadius = 2;
-            button.Anchor = AnchorStyles.Right;
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(2, 0, 2, 0);
         }
         _overlayButton.Click += (_, _) => OpenOverlayConfig();
         _overlayButton.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ToggleOverlay(); };
@@ -53,28 +56,40 @@ internal sealed partial class MechrevoForm
         heading.Controls.Add(_fnLock, 2, 0);
         AddRow(layout, heading);
 
-        var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 2, 0, 16) };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        _keyboardEffect.Items.AddRange(["灯效未回报", "恒亮（静态）", "彩虹"]);
+        var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 2, 0, 0) };
+        for (int i = 0; i < 3; i++) row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
+        _keyboardEffect.Items.AddRange(["恒亮（静态）", "彩虹"]);
+        _keyboardEffect.PlaceholderText = "选择灯效";
         _keyboardEffect.AccessibleName = "笔记本键盘灯效";
-        _keyboardEffect.Margin = new Padding(2, 4, 6, 2);
+        _keyboardEffect.Margin = new Padding(3, 3, 3, 2);
         _keyboardEffect.SelectionChangeCommitted += async (_, _) =>
         {
-            if (_updatingKeyboard || _keyboardEffect.SelectedIndex < 1 || _controller is null) return;
+            if (_updatingKeyboard || _keyboardEffect.SelectedIndex < 0 || _controller is null) return;
             GcuKeyboardSettings? settings = _controller.Snapshot.Keyboard;
             if (settings?.Brightness is not int brightness || settings.MonochromeIndex is not int color) return;
-            string effect = _keyboardEffect.SelectedIndex == 1 ? "Single" : "Rainbow";
+            string effect = _keyboardEffect.SelectedIndex == 0 ? "Single" : "Rainbow";
             await RunKeyboardAsync(() => _controller.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
         };
-        _keyboardMore.Height = 30;
+        _keyboardColor.Height = _keyboardMore.Height = 24;
+        _keyboardColor.Margin = _keyboardMore.Margin = new Padding(2);
+        _keyboardColor.Dock = _keyboardMore.Dock = DockStyle.Top;
+        _keyboardColor.Click += (_, _) => OpenMoreSettings(selectColor: true);
         _keyboardMore.Image = GHelper.Properties.Resources.icons8_settings_32;
+        _keyboardMore.ImageAlign = ContentAlignment.MiddleRight;
+        _keyboardMore.TextAlign = ContentAlignment.MiddleCenter;
         _keyboardMore.TextImageRelation = TextImageRelation.ImageBeforeText;
+        _keyboardMore.BorderColor = Color.Transparent;
+        _keyboardMore.BorderRadius = 2;
+        _keyboardMore.AccessibleName = "更多设置";
         _keyboardMore.Secondary = true;
-        _keyboardMore.Click += (_, _) => OpenKeyboardSettings();
+        _keyboardMore.Click += (_, _) => OpenMoreSettings(toggle: true);
         row.Controls.Add(_keyboardEffect, 0, 0);
-        row.Controls.Add(_keyboardMore, 1, 0);
+        row.Controls.Add(_keyboardColor, 1, 0);
+        row.Controls.Add(_keyboardMore, 2, 0);
         AddRow(layout, row);
+        _keyboardStatus.ForeColor = SystemColors.GrayText;
+        _keyboardStatus.Margin = new Padding(2, 2, 2, 16);
+        AddRow(layout, _keyboardStatus);
     }
 
     private GcuSnapshot KeyboardSnapshot => _demo ? new GcuSnapshot
@@ -96,15 +111,28 @@ internal sealed partial class MechrevoForm
         _fnLock.AccessibleName = "功能键锁定：" + (!snapshot.IsFnLockFresh() ? "未收到" : snapshot.FnLocked == true ? "开启" : "关闭");
         _keyboardEffect.Enabled = available && !_demo && fresh &&
             snapshot.Keyboard is { SingleZone: true, Brightness: not null, MonochromeIndex: not null };
-        _keyboardMore.Enabled = available && (_demo || fresh && snapshot.Keyboard?.SingleZone == true);
+        _keyboardMore.Enabled = !_startupTest;
+        _keyboardColor.Enabled = available && (_demo || fresh && snapshot.Keyboard?.SingleZone == true) &&
+            snapshot.Keyboard?.MonochromeIndex is >= 1 and <= 30;
+        if (fresh && snapshot.Keyboard?.MonochromeIndex is int color && color is >= 1 and <= 30)
+        {
+            var (r, g, b) = GcuKeyboardProtocol.Palette[color - 1];
+            _keyboardColor.SwatchColor = Color.FromArgb(r, g, b);
+        }
+        else _keyboardColor.SwatchColor = null;
+        _keyboardStatus.Text = !fresh ? "背光：等待状态" : snapshot.Keyboard?.Power switch
+        {
+            false => "背光：已关闭", true => "背光：已开启", _ => "背光：开关未回报"
+        };
         _overlayButton.Enabled = !_startupTest;
         _overlayButton.Activated = !_demo && AppConfig.IsOverlay();
         _overlayButton.BackColor = _overlayButton.Activated ? colorEco : buttonSecond;
         _overlayButton.ForeColor = _overlayButton.Activated ? SystemColors.ControlLightLight : SystemColors.ControlDark;
         _overlayButton.AccessibleName = "屏幕叠加：" + (_overlayButton.Activated ? "开启" : "关闭");
         _updatingKeyboard = true;
-        _keyboardEffect.SelectedIndex = !fresh ? 0 : snapshot.Keyboard?.Effect switch { "Single" => 1, "Rainbow" => 2, _ => 0 };
+        _keyboardEffect.SelectedIndex = !fresh ? -1 : snapshot.Keyboard?.Effect switch { "Single" => 0, "Rainbow" => 1, _ => -1 };
         _updatingKeyboard = false;
+        _settingsForm?.RefreshState();
     }
 
     private async Task RunKeyboardAsync(Func<Task<GcuWriteResult>> operation)
@@ -119,11 +147,20 @@ internal sealed partial class MechrevoForm
         finally { _keyboardBusy = false; if (!_closing) RenderSnapshot(); }
     }
 
-    private void OpenKeyboardSettings()
+    private void OpenMoreSettings(bool selectColor = false, bool toggle = false, bool showConnection = false)
     {
-        if (_keyboardForm is { IsDisposed: false }) { _keyboardForm.Activate(); return; }
-        _keyboardForm = new KeyboardSettingsForm(_controller, _demo) { Owner = this };
-        _keyboardForm.Show(this);
+        if (_settingsForm is not { IsDisposed: false })
+            _settingsForm = new MoreSettingsForm(this);
+        if (toggle && _settingsForm.Visible)
+        {
+            _settingsForm.Hide();
+            return;
+        }
+        _settingsForm.RefreshState();
+        if (!_settingsForm.Visible) _settingsForm.Show(this);
+        _settingsForm.Activate();
+        if (showConnection) _settingsForm.ShowConnection();
+        else if (selectColor) _settingsForm.SelectColor();
     }
 
     private HardwareOverlay EnsureOverlay() => _hardwareOverlay ??= new HardwareOverlay(this, ReadOverlay);
@@ -182,7 +219,7 @@ internal sealed partial class MechrevoForm
     {
         if (_overlayHotkey) UnregisterHotKey(Handle, OverlayHotkeyId);
         _overlayConfig?.Close();
-        _keyboardForm?.Close();
+        _settingsForm?.Dispose();
         _hardwareOverlay?.Close();
     }
 }

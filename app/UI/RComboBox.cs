@@ -8,6 +8,7 @@ namespace GHelper.UI
     {
         private const int TextLeftPad = 1;
         public bool UseCustomTextPadding = true;
+        public string PlaceholderText { get; set; } = string.Empty;
 
         public RComboBox()
         {
@@ -47,6 +48,14 @@ namespace GHelper.UI
 
         protected override void OnDrawItem(DrawItemEventArgs e)
         {
+            if (e.Index < 0 && PlaceholderText.Length > 0)
+            {
+                using var brush = new SolidBrush(BackColor);
+                e.Graphics.FillRectangle(brush, e.Bounds);
+                TextRenderer.DrawText(e.Graphics, PlaceholderText, e.Font, e.Bounds, SystemColors.GrayText,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                return;
+            }
             if (!UseCustomTextPadding || e.Index < 0)
             {
                 base.OnDrawItem(e);

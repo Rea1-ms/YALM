@@ -22,6 +22,7 @@ internal static partial class Program
             ("GPU driver power range is read without a fixed cap", GpuDriverPowerRangeParses),
             ("custom settings and fan table parse", CustomSettingsAndFanTableParse),
             ("real firmware end marker retains the last curve point", RealCurveTerminatorRetainsEffectivePoint),
+            ("fan curve zero sentinel uses its stop threshold for display", CurveDisplayUsesStopThreshold),
             ("real keyboard status keeps null effect and case-sensitive power", RealKeyboardStatusParses),
             ("Fn lock is confirmed without fan telemetry", FnLockConfirmsIndependently),
             ("cached Fn lock cannot confirm an unrelated setting frame", CachedFnLockCannotConfirm),

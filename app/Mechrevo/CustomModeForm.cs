@@ -28,8 +28,8 @@ internal sealed partial class CustomModeForm : RForm
     private readonly Label _status = InfoLabel("");
     private readonly Label _readonlyValues = InfoLabel("");
     private readonly Label _curveTable = InfoLabel("风扇表：未收到");
-    private readonly FanCurveEditor _cpuCurve = new("CPU 风扇曲线 · 占空比 / ℃");
-    private readonly FanCurveEditor _gpuCurve = new("GPU 风扇曲线 · 占空比 / ℃");
+    private readonly FanCurveEditor _cpuCurve = new("CPU 风扇配置文件，%/℃");
+    private readonly FanCurveEditor _gpuCurve = new("GPU 风扇配置文件，%/℃");
     private readonly RButton _applyCpuCurve = ActionButton("应用 CPU 曲线", RForm.colorStandard);
     private readonly RButton _applyGpuCurve = ActionButton("应用 GPU 曲线", RForm.colorTurbo);
     private readonly List<SettingEditor> _settings = [];
@@ -295,6 +295,8 @@ internal sealed partial class CustomModeForm : RForm
         _status.ForeColor = RForm.foreMain;
         _readonlyValues.ForeColor = RForm.foreMain;
         _curveTable.ForeColor = RForm.foreMain;
+        _cpuCurve.ApplyThemeColors();
+        _gpuCurve.ApplyThemeColors();
     }
 
     private void OnClosed(object? sender, FormClosedEventArgs e)

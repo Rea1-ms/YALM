@@ -8,8 +8,7 @@ namespace YALM.Mechrevo;
 internal sealed class FanCurveEditor : UserControl
 {
     private readonly RChart _chart = new() { Dock = DockStyle.Fill, Margin = Padding.Empty, TabStop = true };
-    private readonly Label _point = new() { AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(4) };
-    private readonly RNumericUpDown _duty = new() { Minimum = 0, Maximum = 100, Width = 62, Anchor = AnchorStyles.Right };
+    private readonly Label _point = new() { AutoSize = true, Visible = false, Padding = new Padding(3), TabStop = false };
     private readonly Series _rising;
     private readonly Series _falling;
     private IReadOnlyList<FanCurvePoint> _points = [];
@@ -18,40 +17,62 @@ internal sealed class FanCurveEditor : UserControl
     private string? _identity;
     private int _selected;
     private bool _dragging;
-    private bool _updating;
     private bool _editable;
 
     public event Action? DraftChanged;
     public bool HasChanges => !_duties.SequenceEqual(_baseline);
     public bool SnapToGrid { get; set; } = true;
+    public bool ShowFallingThresholds
+    {
+        get => _falling.Enabled;
+        set { _falling.Enabled = value; _chart.Invalidate(); }
+    }
+
+    public void AddCornerControl(Control control)
+    {
+        control.Location = new Point(4, 4);
+        _chart.Controls.Add(control);
+    }
+
+    public void ApplyThemeColors()
+    {
+        foreach (Control control in _chart.Controls)
+            control.ForeColor = RForm.foreMain;
+    }
 
     public FanCurveEditor(string title)
     {
         Dock = DockStyle.Fill;
-        Margin = new Padding(0, 4, 0, 4);
+        Margin = new Padding(0, 6, 0, 6);
         AccessibleName = title;
         var area = new ChartArea("Curve");
         area.AxisX.Minimum = 20;
         area.AxisX.Maximum = 110;
         area.AxisX.Interval = 10;
-        area.AxisX.Title = "温度（℃）";
         area.AxisY.Minimum = 0;
         area.AxisY.Maximum = 100;
-        area.AxisY.Interval = 20;
-        area.AxisY.Title = "风扇（%）";
+        area.AxisY.Interval = 10;
+        for (int i = 0; i <= 100; i += 10)
+            area.AxisY.CustomLabels.Add(i - 2, i + 2, i == 0 ? "关闭" : $"{i}%");
         area.AxisX.IsMarginVisible = false;
-        area.AxisX.LabelStyle.Font = area.AxisY.LabelStyle.Font = new Font("Segoe UI", 8F);
+        area.AxisX.LabelStyle.Font = area.AxisY.LabelStyle.Font = new Font("Arial", 7F);
+        area.AxisX.IsLabelAutoFit = area.AxisY.IsLabelAutoFit = false;
+        area.AxisX.LabelStyle.IsStaggered = area.AxisY.LabelStyle.IsStaggered = false;
+        area.AxisX.LabelStyle.Angle = 0;
+        area.AxisX.LabelStyle.IsEndLabelVisible = true;
+        area.AxisY.IsMarginVisible = false;
+        area.AxisX.MajorGrid.LineColor = area.AxisY.MajorGrid.LineColor = RForm.chartGrid;
         _chart.ChartAreas.Add(area);
         _chart.Titles.Add(title);
         _rising = new Series("升温")
         {
-            ChartType = SeriesChartType.Line, BorderWidth = 2,
-            MarkerStyle = MarkerStyle.Circle, MarkerSize = 8, Color = RForm.colorStandard
+            ChartType = SeriesChartType.Line, BorderWidth = 1,
+            MarkerStyle = MarkerStyle.Circle, MarkerSize = 10, Color = Color.Gray
         };
         _falling = new Series("降温")
         {
             ChartType = SeriesChartType.Line, BorderWidth = 1,
-            BorderDashStyle = ChartDashStyle.Dash, Color = RForm.colorGray
+            BorderDashStyle = ChartDashStyle.Dash, Color = Color.Gray, Enabled = false
         };
         _chart.Series.Add(_falling);
         _chart.Series.Add(_rising);
@@ -59,26 +80,16 @@ internal sealed class FanCurveEditor : UserControl
         _chart.MouseMove += OnChartMouseMove;
         _chart.MouseUp += (_, _) => { _dragging = false; _chart.Capture = false; };
         _chart.MouseCaptureChanged += (_, _) => _dragging = false;
+        _chart.GotFocus += (_, _) => UpdateSelection();
+        _chart.LostFocus += (_, _) => _point.Visible = false;
         _chart.KeyDown += OnChartKeyDown;
         _chart.PreviewKeyDown += (_, e) =>
         {
             if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down) e.IsInputKey = true;
         };
         _chart.AccessibleName = title + "，左右选择温度点，上下调整占空比";
-        _duty.AccessibleName = title + "所选节点占空比";
-        _duty.ValueChanged += (_, _) => { if (!_updating) SetDuty((int)_duty.Value); };
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var footer = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
-        footer.Controls.Add(_point, 0, 0);
-        footer.Controls.Add(_duty, 1, 0);
-        root.Controls.Add(_chart, 0, 0);
-        root.Controls.Add(footer, 0, 1);
-        Controls.Add(root);
+        _chart.Controls.Add(_point);
+        Controls.Add(_chart);
         UpdateSelection();
     }
 
@@ -120,16 +131,19 @@ internal sealed class FanCurveEditor : UserControl
         for (int i = 0; i < _points.Count; i++)
         {
             FanCurvePoint point = _points[i];
-            int index = _rising.Points.AddXY(point.UpTemperature, _duties[i]);
+            int index = _rising.Points.AddXY(point.PlotTemperature, _duties[i]);
             if (point.DownTemperature < 255)
-                _falling.Points.AddXY(point.DownTemperature, _duties[i]);
+            {
+                int fallingIndex = _falling.Points.AddXY(point.DownTemperature, _duties[i]);
+                _falling.Points[fallingIndex].ToolTip = $"降温 {point.DownTemperature} ℃：{_duties[i]}%";
+            }
             _rising.Points[index].ToolTip = PointTemperatures(point) + $"：{_duties[i]}%";
         }
         if (_points.Count > 0)
         {
             Axis axis = _chart.ChartAreas[0].AxisX;
-            axis.Minimum = Math.Min(20, Math.Floor(_points.Min(p => p.DownTemperature) / 10d) * 10);
-            axis.Maximum = Math.Max(100, Math.Ceiling(_points.Max(p => p.UpTemperature) / 10d) * 10 + 10);
+            axis.Minimum = Math.Min(20, Math.Floor(_points.Min(p => p.PlotTemperature) / 10d) * 10);
+            axis.Maximum = Math.Max(110, Math.Ceiling(_points.Max(p => p.PlotTemperature) / 10d) * 10 + 10);
         }
         UpdateSelection();
         _chart.Invalidate();
@@ -137,32 +151,33 @@ internal sealed class FanCurveEditor : UserControl
 
     private void UpdateSelection()
     {
-        _updating = true;
-        try
+        _point.Visible = false;
+        if (_points.Count == 0) return;
+        FanCurvePoint point = _points[_selected];
+        _point.Text = PointTemperatures(point) + $" · {_duties[_selected]}%" +
+            (_selected == 0 ? "（固定）" : HasChanges ? " · 未应用" : "");
+        _chart.AccessibleDescription = _point.Text;
+        if (_chart.Focused || _dragging)
         {
-            _duty.Enabled = _editable && _points.Count > 0 && _selected > 0;
-            if (_points.Count == 0)
+            try
             {
-                _point.Text = "尚未收到曲线";
-                _duty.Value = 0;
-                return;
+                ChartArea area = _chart.ChartAreas[0];
+                int x = (int)area.AxisX.ValueToPixelPosition(point.PlotTemperature);
+                int y = (int)area.AxisY.ValueToPixelPosition(_duties[_selected]);
+                _point.Location = new Point(Math.Clamp(x - _point.PreferredWidth / 2, 0, Math.Max(0, _chart.Width - _point.PreferredWidth)),
+                    Math.Max(0, y - _point.PreferredHeight - 10));
+                _point.BackColor = RForm.chartMain;
+                _point.ForeColor = RForm.foreMain;
+                _point.Visible = true;
             }
-            FanCurvePoint point = _points[_selected];
-            _point.Text = PointTemperatures(point) + $" · {_duties[_selected]}%" +
-                (_selected == 0 ? "（固定）" : HasChanges ? " · 未应用" : "");
-            _duty.Value = Math.Clamp(_duties[_selected], 0, 100);
-            for (int i = 0; i < _rising.Points.Count; i++)
-            {
-                _rising.Points[i].MarkerSize = i == _selected ? 11 : 8;
-                _rising.Points[i].MarkerColor = i == _selected ? RForm.colorCustom : RForm.colorStandard;
-            }
+            catch (InvalidOperationException) { }
         }
-        finally { _updating = false; }
     }
 
-    private static string PointTemperatures(FanCurvePoint point) =>
-        $"升温 {point.UpTemperature} ℃ / 降温 " +
-        (point.DownTemperature == 255 ? "结束" : $"{point.DownTemperature} ℃");
+    private static string PointTemperatures(FanCurvePoint point) => point.UpTemperature == 0 && point.Duty == 0
+        ? $"停转 {point.DownTemperature} ℃"
+        : $"升温 {point.UpTemperature} ℃ / 降温 " +
+          (point.DownTemperature == 255 ? "结束" : $"{point.DownTemperature} ℃");
 
     private void SetDuty(int duty)
     {
@@ -170,7 +185,9 @@ internal sealed class FanCurveEditor : UserControl
         int minimum = _duties[_selected - 1];
         int maximum = _selected + 1 < _duties.Length ? _duties[_selected + 1] : 100;
         if (minimum > maximum) return;
-        _duties[_selected] = Math.Clamp(duty, minimum, maximum);
+        int next = Math.Clamp(duty, minimum, maximum);
+        if (next == _duties[_selected]) return;
+        _duties[_selected] = next;
         Redraw();
         DraftChanged?.Invoke();
     }

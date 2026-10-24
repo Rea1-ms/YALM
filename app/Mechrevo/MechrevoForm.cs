@@ -16,7 +16,7 @@ internal sealed partial class MechrevoForm : RForm
     private readonly Label _connectionStatus = TextLabel("尚未连接");
     private readonly Label _cpuValues = TextLabel("温度：未收到\n风扇：未收到");
     private readonly Label _gpuValues = TextLabel("温度：未收到\n风扇：未收到");
-    private readonly Label _actualSpeeds = TextLabel("实际转速：未收到");
+    private bool _fanRpm = AppConfig.IsNotFalse("fan_rpm");
     private readonly TableLayoutPanel _details = new() { Dock = DockStyle.Top, AutoSize = true, Visible = false, ColumnCount = 1 };
     private readonly Label _ecStatus = TextLabel("实际转速来源：正在读取 EC…");
     private readonly Label _reportedMode = TextLabel("服务回报模式：未收到");
@@ -61,6 +61,7 @@ internal sealed partial class MechrevoForm : RForm
 
         BuildLayout();
         InitTheme(true);
+        TopMost = !_demo && AppConfig.Is("topmost");
         if (!_demo) LoadConnectionEnvironment();
         _machineBlockReason = _demo ? null : _machine.GetModeControlBlockReason();
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
@@ -84,6 +85,17 @@ internal sealed partial class MechrevoForm : RForm
             Margin = Padding.Empty, Padding = Padding.Empty
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foreach (Label reading in new[] { _cpuValues, _gpuValues })
+        {
+            reading.Cursor = Cursors.Hand;
+            reading.AccessibleDescription = "点击切换百分比与实际转速";
+            reading.Click += (_, _) =>
+            {
+                _fanRpm = !_fanRpm;
+                if (!_demo) AppConfig.Set("fan_rpm", _fanRpm ? 1 : 0);
+                RenderSnapshot();
+            };
+        }
         _reportedMode.Font = new Font(Font, FontStyle.Bold);
         AddRow(layout, Heading(_reportedMode, _cpuValues, GHelper.Properties.Resources.icons8_gauge_32));
         var modes = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, Margin = new Padding(0, 3, 0, 20) };
@@ -118,32 +130,22 @@ internal sealed partial class MechrevoForm : RForm
         AddRow(layout, modes);
         var gpuTitle = TextLabel("GPU 与风扇");
         gpuTitle.Font = new Font(Font, FontStyle.Bold);
-        AddRow(layout, Heading(gpuTitle, _gpuValues, GHelper.Properties.Resources.icons8_video_card_32));
-        _actualSpeeds.Margin = new Padding(0, 6, 0, 18);
-        AddRow(layout, _actualSpeeds);
+        Control gpuHeading = Heading(gpuTitle, _gpuValues, GHelper.Properties.Resources.icons8_video_card_32);
+        gpuHeading.Margin = new Padding(0, 0, 0, 18);
+        AddRow(layout, gpuHeading);
         BuildKeyboardLayout(layout);
         AddRow(layout, _controlStatus);
         AddRow(layout, _actionStatus);
 
-        var footer = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 10, 0, 0) };
+        var footer = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 10, 0, 0) };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
         _connectionStatus.Anchor = AnchorStyles.Left;
         footer.Controls.Add(_connectionStatus, 0, 0);
-        var settings = Button("更多设置", colorGray);
-        settings.Height = 32;
-        settings.Click += (_, _) =>
-        {
-            _details.Visible = !_details.Visible;
-            _connectionSettings.Visible = _details.Visible && !_demo;
-            if (_details.Visible) Height = Math.Max(Height, 620 * DeviceDpi / 96);
-        };
-        footer.Controls.Add(settings, 1, 0);
         var quit = Button("退出", colorGray);
         quit.Height = 32;
         quit.Click += (_, _) => Close();
-        footer.Controls.Add(quit, 2, 0);
+        footer.Controls.Add(quit, 1, 0);
         AddRow(layout, footer);
         _details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddRow(_details, TextLabel(_machine.DisplayName));
@@ -151,7 +153,6 @@ internal sealed partial class MechrevoForm : RForm
         AddRow(_details, _connectionSettings);
         BuildConnectionSettings();
         AddRow(_details, TextLabel("仅手动切换模式；关闭窗口不会关闭厂商服务。"));
-        AddRow(layout, _details);
         Controls.Add(layout);
     }
 
@@ -200,8 +201,6 @@ internal sealed partial class MechrevoForm : RForm
             _port.Value = discovered.Port;
             _autoConnect = true;
         }
-        _connectionSettings.Visible = !_autoConnect;
-        if (!_autoConnect) _details.Visible = true;
         if (!validPort) _actionStatus.Text = "环境变量中的端口无效，请在连接设置中填写。";
     }
 
@@ -213,10 +212,11 @@ internal sealed partial class MechrevoForm : RForm
         if (_smokeTest)
         {
             OpenCustomMode();
-            OpenKeyboardSettings();
+            OpenMoreSettings();
             OpenOverlayConfig();
         }
         if (_autoConnect && !_demo) await ConnectAsync();
+        else if (!_demo && !_startupTest) OpenMoreSettings(showConnection: true);
         if (!_demo && !_startupTest && AppConfig.IsOverlay()) EnsureOverlay().StartOverlay();
     }
 
@@ -244,6 +244,7 @@ internal sealed partial class MechrevoForm : RForm
         {
             _actionStatus.Text = "请填写客户端标识、用户名和密码；程序没有内置凭据。";
             _connectionSettings.Visible = true;
+            OpenMoreSettings(showConnection: true);
             return;
         }
         _connecting = true;
@@ -267,7 +268,6 @@ internal sealed partial class MechrevoForm : RForm
             await _controller.ConnectAsync(options, _lifetime.Token);
             if (_closing) return;
             _actionStatus.Text = "已连接，正在读取服务状态。";
-            _connectionSettings.Visible = false;
             await _controller.RefreshAsync(_lifetime.Token);
         }
         catch (OperationCanceledException) when (_closing) { }
@@ -277,6 +277,7 @@ internal sealed partial class MechrevoForm : RForm
             {
                 _actionStatus.Text = "连接失败：" + SafeMessage(ex.Message);
                 _connectionSettings.Visible = true;
+                if (!_startupTest) OpenMoreSettings(showConnection: true);
             }
         }
         finally
@@ -422,9 +423,8 @@ internal sealed partial class MechrevoForm : RForm
         if (_demo)
         {
             _connectionStatus.Text = "演示 · 未连接服务";
-            _cpuValues.Text = "CPU: 48 ℃  风扇: 35%";
-            _gpuValues.Text = "GPU: 43 ℃  风扇: 35%";
-            _actualSpeeds.Text = "实际转速：演示中不读取";
+            _cpuValues.Text = "CPU: 48 ℃  风扇: " + (_fanRpm ? "2100 RPM" : "35%");
+            _gpuValues.Text = "GPU: 43 ℃  风扇: " + (_fanRpm ? "2000 RPM" : "35%");
             _ecStatus.Text = "示例状态 · 不读取 EC 实际转速";
             _reportedMode.Text = "性能模式：均衡";
             _controlStatus.Text = "演示布局，可打开风扇与功耗预览曲线。";
@@ -452,9 +452,12 @@ internal sealed partial class MechrevoForm : RForm
         _connectionStatus.Text = _connecting ? "正在处理连接…" : connected ? "已连接本机服务" : "尚未连接";
         if (!connected && !string.IsNullOrWhiteSpace(snapshot?.LastError))
             _connectionStatus.Text = "连接不可用：" + SafeMessage(snapshot.LastError);
-        _cpuValues.Text = $"CPU: {Value(snapshot?.CpuTemperature, connected && snapshot!.IsCpuTemperatureFresh(now), " ℃")}  风扇: {Value(snapshot?.CpuFanDuty, connected && snapshot!.IsCpuFanDutyFresh(now), "%")}";
-        _gpuValues.Text = $"GPU: {Value(snapshot?.GpuTemperature, connected && snapshot!.IsGpuTemperatureFresh(now), " ℃")}  风扇: {Value(snapshot?.GpuFanDuty, connected && snapshot!.IsGpuFanDutyFresh(now), "%")}";
-        _actualSpeeds.Text = $"实际转速 · CPU {Value(cpuRpm, cpuRpm.HasValue, " 转/分")} · GPU {Value(gpuRpm, gpuRpm.HasValue, " 转/分")}";
+        string cpuFan = _fanRpm ? Value(cpuRpm, cpuRpm.HasValue, " RPM")
+            : Value(snapshot?.CpuFanDuty, connected && snapshot!.IsCpuFanDutyFresh(now), "%");
+        string gpuFan = _fanRpm ? Value(gpuRpm, gpuRpm.HasValue, " RPM")
+            : Value(snapshot?.GpuFanDuty, connected && snapshot!.IsGpuFanDutyFresh(now), "%");
+        _cpuValues.Text = $"CPU: {Value(snapshot?.CpuTemperature, connected && snapshot!.IsCpuTemperatureFresh(now), " ℃")}  风扇: {cpuFan}";
+        _gpuValues.Text = $"GPU: {Value(snapshot?.GpuTemperature, connected && snapshot!.IsGpuTemperatureFresh(now), " ℃")}  风扇: {gpuFan}";
         _ecStatus.Text = !_machine.SupportsModeControl ? "此机型未验证，不读取 EC 实际转速。"
             : _ecSnapshot switch
         {

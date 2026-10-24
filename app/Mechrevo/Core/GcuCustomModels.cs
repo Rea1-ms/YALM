@@ -42,6 +42,11 @@ public sealed record FanCurvePoint(
     // The last effective slot has a valid rising threshold and a 255 falling
     // terminator. Only two terminators identify an unused tail slot.
     public bool IsTail => UpTemperature == 255 && DownTemperature == 255;
+
+    // Slot zero has no rising threshold. Plot its actual fan-stop threshold,
+    // keeping the protocol's zero sentinel out of line interpolation.
+    public int PlotTemperature => UpTemperature == 0 && Duty == 0 && DownTemperature < 255
+        ? DownTemperature : UpTemperature;
 }
 
 public static class FanCurveDraft

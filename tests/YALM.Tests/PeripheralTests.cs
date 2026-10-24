@@ -36,11 +36,34 @@ internal static partial class Program
         Assert.Equal(3, snapshot.Keyboard?.Brightness, "single-zone brightness is a level");
         Assert.Equal(17, snapshot.Keyboard?.MonochromeIndex, "real color palette index");
         Assert.Equal(false, snapshot.Keyboard?.Power, "powerStatus Off must not be replaced by lowercase powerstatus");
+        var on = GcuMessageParser.Apply(snapshot, "Keyboard/Status",
+            "{\"type\":\"SingleZone\",\"powerStatus\":\"On\",\"effect\":null}", now, out _);
+        Assert.Equal(true, on.Keyboard?.Power, "power can be on without an effect report");
+        Assert.Null(on.Keyboard?.Effect, "missing effect must not be inferred from power");
         Assert.False(snapshot.IsKeyboardFresh(now.AddSeconds(11)), "keyboard state must expire independently");
         snapshot = GcuMessageParser.Apply(snapshot, "Setting/Status", "{\"FnKey\":\"FNKEY_UNLOCK\"}", now, out _);
         Assert.Equal(false, snapshot.FnLocked, "unlocked FN state");
         snapshot = GcuMessageParser.Apply(snapshot, "Setting/Status", "{\"FnKey\":\"unknown\"}", now, out _);
         Assert.False(snapshot.IsFnLockFresh(now), "unknown FN state must disable writes");
+        return Task.CompletedTask;
+    }
+
+    private static Task CurveDisplayUsesStopThreshold()
+    {
+        using var fixture = ReadRealServiceFixture();
+        var snapshot = GcuMessageParser.Apply(new() { IsConnected = true }, "Fan/Table",
+            fixture.RootElement.GetProperty("FanTable").GetRawText(), DateTimeOffset.UtcNow, out _);
+        foreach (FanCurveTarget target in Enum.GetValues<FanCurveTarget>())
+        {
+            var curve = snapshot.FanTable!.Curve(target);
+            Assert.Equal(0, curve[0].UpTemperature, "firmware sentinel must remain unchanged");
+            Assert.Equal(48, curve[0].PlotTemperature, "fixed stop point is drawn at its real threshold");
+            Assert.True(curve.Take(11).All(point => point.PlotTemperature is >= 20 and <= 110),
+                "off-plot sentinel must not create a diagonal line through the plot");
+            Assert.True(curve.Skip(1).Take(10).All(point => point.PlotTemperature == point.UpTemperature),
+                "effective rising thresholds must be preserved, including coincident GPU points");
+            Assert.Equal(255, curve[15].PlotTemperature, "tail sentinel is not an editable display point");
+        }
         return Task.CompletedTask;
     }
 

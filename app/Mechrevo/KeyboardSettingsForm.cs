@@ -2,9 +2,9 @@ using GHelper.UI;
 
 namespace YALM.Mechrevo;
 
-internal sealed class KeyboardSettingsForm : RForm
+internal sealed class KeyboardSettingsPanel : UserControl
 {
-    private readonly GcuController? _controller;
+    private readonly Func<GcuController?> _controller;
     private readonly bool _demo;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly RComboBox _effect = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
@@ -18,22 +18,19 @@ internal sealed class KeyboardSettingsForm : RForm
     private bool _dirty;
     private bool _rendering;
 
-    public KeyboardSettingsForm(GcuController? controller, bool demo)
+    public KeyboardSettingsPanel(Func<GcuController?> controller, bool demo)
     {
         _controller = controller;
         _demo = demo;
-        Text = "YALM · 笔记本键盘";
-        Font = new Font("Microsoft YaHei UI", 9F);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(400, 365);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
-        StartPosition = FormStartPosition.CenterParent;
-        Padding = new Padding(14);
-        var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        Dock = DockStyle.Top;
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        Margin = Padding.Empty;
+        var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _effect.Items.AddRange(["灯效未回报，请选择", "恒亮（静态）", "彩虹"]);
+        _effect.Items.AddRange(["恒亮（静态）", "彩虹"]);
+        _effect.PlaceholderText = "选择灯效";
         for (int i = 0; i < GcuKeyboardProtocol.Palette.Length; i++)
         {
             var (r, g, b) = GcuKeyboardProtocol.Palette[i];
@@ -64,7 +61,7 @@ internal sealed class KeyboardSettingsForm : RForm
         root.SetColumnSpan(_status, 2);
         var note = new Label
         {
-            Text = "此处显示服务保存的设置；闲置临时熄灯后，开关回报可能不变。\n亮度和颜色随所选灯效一起应用。",
+            Text = "单区键盘服务不回报当前灯效，与灯光开关无关。\n亮度和颜色随所选灯效一起应用；闲置临时熄灯后的开关回报可能不变。",
             AutoSize = true, MaximumSize = new Size(330, 0), Margin = new Padding(4, 12, 4, 4)
         };
         root.Controls.Add(note, 0, root.RowCount++);
@@ -72,35 +69,37 @@ internal sealed class KeyboardSettingsForm : RForm
         Controls.Add(root);
         _power.Click += async (_, _) =>
         {
-            if (_controller?.Snapshot.Keyboard?.Power is bool on)
-                await RunAsync(() => _controller.SetKeyboardPowerAsync(!on, _lifetime.Token));
+            if (_controller() is { } current && current.Snapshot.Keyboard?.Power is bool on)
+                await RunAsync(() => current.SetKeyboardPowerAsync(!on, _lifetime.Token));
         };
         _apply.Click += async (_, _) =>
         {
-            if (_controller is null || _effect.SelectedIndex < 1 || _color.SelectedIndex < 0) return;
-            string effect = _effect.SelectedIndex == 1 ? "Single" : "Rainbow";
+            if (_controller() is not { } current || _effect.SelectedIndex < 0 || _color.SelectedIndex < 0) return;
+            string effect = _effect.SelectedIndex == 0 ? "Single" : "Rainbow";
             int brightness = (int)_brightness.Value;
             int color = _color.SelectedIndex + 1;
-            await RunAsync(() => _controller.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
+            await RunAsync(() => current.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
         };
         _refresh.Click += async (_, _) =>
         {
-            if (_controller is null || _busy) return;
+            if (_controller() is not { } current || _busy) return;
             _dirty = false;
-            try { await _controller.RefreshAsync(_lifetime.Token); }
+            try { await current.RefreshAsync(_lifetime.Token); }
             catch (OperationCanceledException) { }
             catch { _status.Text = "键盘状态读取失败。"; }
             Render();
         };
-        InitTheme(true);
-        if (_controller is not null) _controller.Changed += OnChanged;
-        FormClosed += (_, _) =>
+        Render();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !IsDisposed)
         {
             _lifetime.Cancel();
-            if (_controller is not null) _controller.Changed -= OnChanged;
             _lifetime.Dispose();
-        };
-        Render();
+        }
+        base.Dispose(disposing);
     }
 
     private void MarkDirty()
@@ -109,6 +108,13 @@ internal sealed class KeyboardSettingsForm : RForm
         _dirty = true;
         _status.Text = "设置尚未应用。";
         Render();
+    }
+
+    public void SelectColor()
+    {
+        // Choose the effect explicitly when the service cannot identify it.
+        if (_effect.SelectedIndex < 0) _effect.Focus();
+        else _color.Focus();
     }
 
     private async Task RunAsync(Func<Task<GcuWriteResult>> operation)
@@ -129,16 +135,12 @@ internal sealed class KeyboardSettingsForm : RForm
         finally { _busy = false; if (!IsDisposed) Render(); }
     }
 
-    private void OnChanged()
-    {
-        if (IsDisposed || !IsHandleCreated) return;
-        try { BeginInvoke((Action)Render); } catch (InvalidOperationException) { }
-    }
+    public void RefreshState() => Render();
 
     private void Render()
     {
         if (IsDisposed) return;
-        GcuSnapshot snapshot = _controller?.Snapshot ?? new();
+        GcuSnapshot snapshot = _controller()?.Snapshot ?? new();
         GcuKeyboardSettings? keyboard = _demo
             ? new() { Type = "SingleZone", Effect = "Single", Brightness = 3, MonochromeIndex = 17, Power = true }
             : snapshot.Keyboard;
@@ -147,7 +149,7 @@ internal sealed class KeyboardSettingsForm : RForm
         _rendering = true;
         if (!_dirty)
         {
-            _effect.SelectedIndex = keyboard?.Effect switch { "Single" => 1, "Rainbow" => 2, _ => 0 };
+            _effect.SelectedIndex = keyboard?.Effect switch { "Single" => 0, "Rainbow" => 1, _ => -1 };
             _brightness.Value = keyboard?.Brightness ?? 0;
             _color.SelectedIndex = keyboard?.MonochromeIndex is int color ? color - 1 : -1;
         }
@@ -155,11 +157,11 @@ internal sealed class KeyboardSettingsForm : RForm
         _power.Text = "键盘灯：" + (!fresh || keyboard?.Power is null ? "未收到" : keyboard.Power == true ? "开" : "关");
         _power.Enabled = !_demo && !_busy && supported && keyboard?.Power is not null;
         _apply.Enabled = !_demo && !_busy && supported && keyboard?.Brightness is not null &&
-            _dirty && _effect.SelectedIndex > 0 && _color.SelectedIndex >= 0;
+            _dirty && _effect.SelectedIndex >= 0 && _color.SelectedIndex >= 0;
         _refresh.Enabled = !_demo && !_busy && snapshot.IsConnected;
         _effect.Enabled = supported && !_busy;
         _brightness.Enabled = supported && !_busy && keyboard?.Brightness is not null;
-        _color.Enabled = supported && !_busy && _effect.SelectedIndex == 1;
+        _color.Enabled = supported && !_busy && _effect.SelectedIndex == 0;
         if (_demo) _status.Text = "演示 · 仅预览，不连接键盘。";
         else if (!fresh) _status.Text = "等待新鲜的键盘状态。";
         else if (keyboard?.Brightness is null) _status.Text = "亮度尚未回报，暂时不能应用灯效。";
@@ -167,8 +169,8 @@ internal sealed class KeyboardSettingsForm : RForm
 
     private static RButton ActionButton(string text) => new()
     {
-        Text = text, Dock = DockStyle.Fill, Height = 34, Margin = new Padding(2, 10, 2, 2),
-        BorderColor = colorStandard, BorderRadius = 4
+        Text = text, Dock = DockStyle.Top, Height = 26, Margin = new Padding(2, 6, 2, 2),
+        BorderColor = Color.Transparent, BorderRadius = 2, Secondary = true
     };
 
     private static void AddField(TableLayoutPanel root, string title, Control input)

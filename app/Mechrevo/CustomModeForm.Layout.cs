@@ -28,9 +28,8 @@ internal sealed partial class CustomModeForm
         left.Controls.Add(_pages, 0, 1);
         root.Controls.Add(left, 0, 0);
 
-        var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = Padding.Empty };
+        var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
         right.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
@@ -55,9 +54,9 @@ internal sealed partial class CustomModeForm
 
         var snap = new RCheckBox { Text = "对齐网格", Checked = true, AutoSize = true, Margin = new Padding(4, 2, 4, 0) };
         snap.CheckedChanged += (_, _) => _cpuCurve.SnapToGrid = _gpuCurve.SnapToGrid = snap.Checked;
-        right.Controls.Add(snap, 0, 1);
-        right.Controls.Add(_cpuCurve, 0, 2);
-        right.Controls.Add(_gpuCurve, 0, 3);
+        _cpuCurve.AddCornerControl(snap);
+        right.Controls.Add(_cpuCurve, 0, 1);
+        right.Controls.Add(_gpuCurve, 0, 2);
         var actions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 8, 0, 0) };
         for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
         _refresh.Text = "重新读取";
@@ -78,7 +77,7 @@ internal sealed partial class CustomModeForm
         actions.Controls.Add(_refresh, 0, 0);
         actions.Controls.Add(_applyCpuCurve, 1, 0);
         actions.Controls.Add(_applyGpuCurve, 2, 0);
-        right.Controls.Add(actions, 0, 4);
+        right.Controls.Add(actions, 0, 3);
         root.Controls.Add(right, 1, 0);
         _status.MaximumSize = new Size(800, 0);
         root.Controls.Add(_status, 0, 1);
@@ -129,7 +128,10 @@ internal sealed partial class CustomModeForm
         _summary.MaximumSize = _curveTable.MaximumSize = new Size(265, 0);
         AddRow(layout, _summary);
         AddRow(layout, _curveTable);
-        AddRow(layout, InfoLabel("实线为升温，虚线为降温。温度点由固件固定，可拖动节点或输入占空比；首点为 0%，末点同步五个尾值。独立输出只读。"));
+        var falling = new RCheckBox { Text = "显示降温阈值", AutoSize = true, Margin = new Padding(4, 8, 4, 4) };
+        falling.CheckedChanged += (_, _) => _cpuCurve.ShowFallingThresholds = _gpuCurve.ShowFallingThresholds = falling.Checked;
+        AddRow(layout, falling);
+        AddRow(layout, InfoLabel("温度点由固件固定；拖动节点调整百分比，悬停查看温度。左右键选点，上下键微调，按住上档键每次调整 5%。应用后才写入。"));
         return ScrollPage(layout);
     }
 
