@@ -9,8 +9,11 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanModels.cs" Link="Core\EcFanModels.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\GpuRouteModels.cs" Link="Core\GpuRouteModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanDecoder.cs" Link="Core\EcFanDecoder.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuModels.cs" Link="Core\GcuModels.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\GcuCustomModels.cs" Link="Core\GcuCustomModels.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\GpuDriverPower.cs" Link="Core\GpuDriverPower.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuMessageParser.cs" Link="Core\GcuMessageParser.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuController.cs" Link="Core\GcuController.cs" />
   </ItemGroup>

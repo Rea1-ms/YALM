@@ -44,11 +44,15 @@ internal static class MechrevoProgram
 
     private static int Run(string[] args)
     {
-        if (args.Length == 2 && args[0] == "--probe")
+        if (args.Length is 2 or 3 && args[0] == "--probe")
         {
+            int captureSeconds = 15;
+            if (args.Length == 3 &&
+                (!int.TryParse(args[2], out captureSeconds) || captureSeconds is < 5 or > 120))
+                return 2;
             using var probeMutex = new Mutex(true, InstanceMutex, out bool ownsProbeMutex);
             if (!ownsProbeMutex) return 2;
-            try { return MechrevoProbe.RunAsync(args[1]).GetAwaiter().GetResult(); }
+            try { return MechrevoProbe.RunAsync(args[1], captureSeconds).GetAwaiter().GetResult(); }
             finally { probeMutex.ReleaseMutex(); }
         }
         bool smokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase);

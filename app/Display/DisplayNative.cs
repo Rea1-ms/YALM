@@ -370,6 +370,16 @@ namespace GHelper.Display
             public string viewGdiDeviceName;
         }
 
+        /// <summary>回包中的显示适配器设备接口路径，例如 PCI#VEN_8086&amp;DEV_...</summary>
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct DISPLAYCONFIG_ADAPTER_NAME
+        {
+            public DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string adapterDevicePath;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
         {
@@ -452,6 +462,9 @@ namespace GHelper.Display
 
         [DllImport("user32.dll")]
         public static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_SOURCE_DEVICE_NAME deviceName);
+
+        [DllImport("user32.dll")]
+        public static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_ADAPTER_NAME adapterName);
 
         [DllImport("user32.dll")]
         public static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO requestPacket);

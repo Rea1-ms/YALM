@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -7,7 +8,8 @@ namespace YALM.Mechrevo;
 /// <summary>Explicit mode changes only. No startup, reconnect, power or fan scheduling.</summary>
 public sealed class GcuController : IAsyncDisposable
 {
-    private static readonly string[] Topics = ["Fan/Status", "Setting/Status", "System/FanInfo", "System/CpuInfo", "System/GpuInfo"];
+    private static readonly string[] Topics =
+        ["Fan/Status", "Fan/Table", "Setting/Status", "System/FanInfo", "System/CpuInfo", "System/GpuInfo"];
     private const string GetStatus = "{\"Action\":\"GETSTATUS\"}";
     private readonly IGcuTransport _transport;
     private readonly TimeProvider _time;
@@ -19,6 +21,8 @@ public sealed class GcuController : IAsyncDisposable
     private CancellationTokenSource? _session;
     private GcuSnapshot _snapshot = new();
     private long _modeVersion;
+    private long _customSettingsVersion;
+    private long _fanTableVersion;
     private bool _disposed;
 
     public GcuController(IGcuTransport transport, TimeProvider? timeProvider = null,
@@ -69,6 +73,8 @@ public sealed class GcuController : IAsyncDisposable
                         TurboSupportedUpdatedAt = options.TurboSupported.HasValue ? _time.GetUtcNow() : null
                     };
                     _modeVersion = 0;
+                    _customSettingsVersion = 0;
+                    _fanTableVersion = 0;
                 }
                 RaiseChanged();
                 // The original service reinitializes hardware telemetry on System_ON.
@@ -101,6 +107,130 @@ public sealed class GcuController : IAsyncDisposable
             throw;
         }
         finally { _operation.Release(); }
+    }
+
+    public async Task<GcuWriteResult> RefreshCustomAsync(CancellationToken ct = default)
+    {
+        return await ConfirmWriteAsync(
+            async token =>
+            {
+                await _transport.PublishAsync("Fan/Control", GetStatus, token).ConfigureAwait(false);
+                await _transport.PublishAsync("Fan/Control",
+                    "{\"Action\":\"GET_FAN_SPEED_CURVE_SETTING\"}", token).ConfigureAwait(false);
+            },
+            _ => true,
+            requireCustomSettings: true,
+            requireFanTable: true,
+            success: "自定义设置和两路曲线已读取。",
+            ct: ct).ConfigureAwait(false);
+    }
+
+    public async Task<GcuWriteResult> SetCustomProfileAsync(int profileIndex, CancellationToken ct = default)
+    {
+        if (profileIndex is < 0 or > 4)
+            return new(GcuWriteStatus.Rejected, "自定义档位必须在 0..4 之间。");
+        return await ConfirmWriteAsync(
+            async token =>
+            {
+                string primary = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["Action"] = "OPERATING_CUSTOM_MODE",
+                    ["ProfileIndex"] = profileIndex
+                });
+                await _transport.PublishAsync("Fan/Control", primary, token).ConfigureAwait(false);
+                await _transport.PublishAsync("LCHWOC/Control", "{\"IsCustomRun\":true}", token).ConfigureAwait(false);
+            },
+            snapshot => snapshot.Mode == 3 &&
+                snapshot.CustomSettings?.ProfileIndex == profileIndex,
+            requireCustomSettings: true,
+            success: $"已切换到自定义 Profile-{profileIndex + 1}。",
+            ct: ct).ConfigureAwait(false);
+    }
+
+    public async Task<GcuWriteResult> SetFanBoostAsync(bool enabled, CancellationToken ct = default)
+    {
+        if (Snapshot.Mode != 3)
+            return new(GcuWriteStatus.Rejected, "风扇增强只能在自定义模式中切换。");
+
+        return await ConfirmWriteAsync(
+            token => _transport.PublishAsync("Fan/Control",
+                enabled ? "{\"Action\":\"FAN_BOOST_ON\"}" : "{\"Action\":\"FAN_BOOST_OFF\"}", token),
+            snapshot => snapshot.CustomSettings?.FanBoostEnabled == enabled,
+            requireCustomSettings: true,
+            success: enabled ? "风扇增强已开启。" : "风扇增强已关闭。",
+            ct: ct).ConfigureAwait(false);
+    }
+
+    public async Task<GcuWriteResult> SetCustomFieldAsync(
+        GcuCustomWriteField field, int value, CancellationToken ct = default)
+    {
+        GcuSnapshot before = Snapshot;
+        GcuCustomSettings? settings = before.CustomSettings;
+        if (settings is null || !before.IsCustomSettingsFresh(_time.GetUtcNow()))
+            return new(GcuWriteStatus.Rejected, "自定义设置尚未读取或已过期。");
+        if (before.Mode != 3)
+            return new(GcuWriteStatus.Rejected, "请先切换到自定义模式，再修改这些参数。");
+        if (!TryEncodeCustomField(settings, field, value, out string wireKey, out string wireValue,
+            out Func<GcuCustomSettings, bool> confirmed, out string rejection))
+            return new(GcuWriteStatus.Rejected, rejection);
+
+        string payload = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["Action"] = "SET_OPERATING_MODE_DETAIL",
+            [wireKey] = wireValue
+        });
+        return await ConfirmWriteAsync(
+            token => _transport.PublishAsync("Fan/Control", payload, token),
+            snapshot => snapshot.CustomSettings is { } current && confirmed(current),
+            requireCustomSettings: true,
+            success: "服务已回读目标参数。",
+            ct: ct).ConfigureAwait(false);
+    }
+
+    public async Task<GcuWriteResult> SetFanCurveAsync(
+        FanCurveTarget target,
+        IReadOnlyList<int> duties,
+        CancellationToken ct = default)
+    {
+        if (duties.Count != 16 || duties.Any(value => value is < 0 or > 100))
+            return new(GcuWriteStatus.Rejected, "风扇曲线必须包含 16 个 0..100 的整数占空比。");
+        if (duties[0] != 0)
+            return new(GcuWriteStatus.Rejected, "风扇曲线第 1 个温度点的占空比固定为 0%。");
+        for (int i = 1; i < duties.Count; i++)
+        {
+            if (duties[i] < duties[i - 1])
+                return new(GcuWriteStatus.Rejected, "风扇曲线占空比不能随温度下降。");
+        }
+        for (int i = 11; i < 16; i++)
+        {
+            if (duties[i] != duties[10])
+                return new(GcuWriteStatus.Rejected, "风扇曲线最后 5 个尾值必须与第 11 个有效点相同。");
+        }
+
+        GcuSnapshot before = Snapshot;
+        if (before.Mode != 3)
+            return new(GcuWriteStatus.Rejected, "风扇曲线只能在自定义模式中应用。");
+        FanCurveTable? table = before.FanTable;
+        if (table is null || !before.IsFanTableFresh(_time.GetUtcNow()) ||
+            string.IsNullOrWhiteSpace(table.Name) ||
+            table.Curve(target).Count != 16)
+            return new(GcuWriteStatus.Rejected, "当前风扇表尚未读取或已经过期。");
+
+        var payload = new Dictionary<string, object>
+        {
+            ["Action"] = "SET_FAN_SPEED_CURVE_SETTING",
+            ["Name"] = table.Name,
+            ["Type"] = target == FanCurveTarget.Cpu ? "CPU" : "GPU"
+        };
+        for (int i = 0; i < duties.Count; i++)
+            payload[$"T{i}"] = duties[i].ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        return await ConfirmWriteAsync(
+            token => _transport.PublishAsync("Fan/Control", JsonSerializer.Serialize(payload), token),
+            snapshot => CurveMatches(snapshot.FanTable, target, duties),
+            requireFanTable: true,
+            success: (target == FanCurveTarget.Cpu ? "CPU" : "GPU") + " 风扇曲线已回读确认。",
+            ct: ct).ConfigureAwait(false);
     }
 
     public async Task<ModeSwitchResult> SetModeAsync(PerformanceMode mode, CancellationToken ct = default)
@@ -193,6 +323,167 @@ public sealed class GcuController : IAsyncDisposable
         await _transport.PublishAsync("Setting/Control", GetStatus, ct).ConfigureAwait(false);
     }
 
+    private async Task<GcuWriteResult> ConfirmWriteAsync(
+        Func<CancellationToken, Task> send,
+        Func<GcuSnapshot, bool> confirmed,
+        bool requireCustomSettings = false,
+        bool requireFanTable = false,
+        string success = "服务已回读目标状态。",
+        CancellationToken ct = default)
+    {
+        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
+            return new(GcuWriteStatus.Busy, "上一项操作尚未完成。");
+        try
+        {
+            if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
+                return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
+
+            long modeBaseline;
+            long customBaseline;
+            long tableBaseline;
+            lock (_sync)
+            {
+                modeBaseline = _modeVersion;
+                customBaseline = _customSettingsVersion;
+                tableBaseline = _fanTableVersion;
+            }
+
+            using var linked = LinkedSession(ct);
+            await send(linked.Token).ConfigureAwait(false);
+            long started = _time.GetTimestamp();
+            while (_time.GetElapsedTime(started) < _confirmationTimeout)
+            {
+                await _transport.PublishAsync("Fan/Control", GetStatus, linked.Token).ConfigureAwait(false);
+                if (requireFanTable)
+                    await _transport.PublishAsync("Fan/Control",
+                        "{\"Action\":\"GET_FAN_SPEED_CURVE_SETTING\"}", linked.Token).ConfigureAwait(false);
+
+                bool changed;
+                lock (_sync)
+                {
+                    bool modeChanged = _modeVersion > modeBaseline;
+                    bool customChanged = _customSettingsVersion > customBaseline;
+                    bool tableChanged = _fanTableVersion > tableBaseline;
+                    changed = (!requireCustomSettings || customChanged) &&
+                        (!requireFanTable || tableChanged) &&
+                        (modeChanged || customChanged || tableChanged) &&
+                        confirmed(_snapshot);
+                }
+                if (changed)
+                {
+                    SetError(null);
+                    return new(GcuWriteStatus.Confirmed, success);
+                }
+
+                TimeSpan remaining = _confirmationTimeout - _time.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(remaining < _pollInterval ? remaining : _pollInterval, _time, linked.Token)
+                    .ConfigureAwait(false);
+            }
+
+            SetError("等待服务回读超时；参数是否生效尚未确认。");
+            return new(GcuWriteStatus.TimedOut, "等待服务回读超时，界面不会把请求显示成已生效。");
+        }
+        catch (OperationCanceledException)
+        {
+            return ct.IsCancellationRequested
+                ? new(GcuWriteStatus.Cancelled, "操作已取消；已经发送的命令仍可能由服务执行。")
+                : new(GcuWriteStatus.Disconnected, "连接已断开，参数是否生效尚未确认。");
+        }
+        catch (Exception)
+        {
+            SetError("参数请求未完成，回读尚未确认。");
+            return new(GcuWriteStatus.Failed, "参数请求未完成，回读尚未确认。");
+        }
+        finally { _operation.Release(); }
+    }
+
+    private static bool TryEncodeCustomField(
+        GcuCustomSettings settings,
+        GcuCustomWriteField field,
+        int value,
+        out string wireKey,
+        out string wireValue,
+        out Func<GcuCustomSettings, bool> confirmed,
+        out string rejection)
+    {
+        wireKey = "";
+        wireValue = "";
+        confirmed = _ => false;
+        rejection = "该参数在当前固件状态下不可调。";
+
+        static bool InRange(int value, int? minimum, int? maximum) =>
+            minimum.HasValue && maximum.HasValue && minimum <= maximum &&
+            value >= minimum.Value && value <= maximum.Value;
+
+        switch (field)
+        {
+            case GcuCustomWriteField.Pl1 when InRange(value, settings.Pl1Minimum, settings.Pl1Maximum):
+                wireKey = "PL1";
+                wireValue = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.Pl1 == value;
+                break;
+            case GcuCustomWriteField.Pl2 when InRange(value, settings.Pl2Minimum, settings.Pl2Maximum):
+                wireKey = "PL2";
+                wireValue = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.Pl2 == value;
+                break;
+            case GcuCustomWriteField.Pl4 when InRange(value, settings.Pl4Minimum, settings.Pl4Maximum):
+                if (settings.Pl4HalfWatt == true)
+                {
+                    if ((value & 1) != 0)
+                    {
+                        rejection = "该机型的瞬时功耗按半瓦单位写入，只能选择偶数瓦。";
+                        return false;
+                    }
+                    wireValue = (value / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                else
+                {
+                    wireValue = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                wireKey = "PL4";
+                confirmed = current => current.Pl4 == value;
+                break;
+            case GcuCustomWriteField.TccTarget when settings.TjMax is { } tjMax &&
+                value is >= 75 and <= 95 && value <= tjMax:
+                wireKey = "CpuTccOffset";
+                wireValue = (tjMax - value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.TccTarget == value;
+                break;
+            case GcuCustomWriteField.TccEnabled when value is 0 or 1:
+                wireKey = "CpuTccOffsetSwitch";
+                wireValue = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.TccEnabled == (value == 1);
+                break;
+            case GcuCustomWriteField.FanSwitchSpeed when value is >= 100 and <= 25500:
+                int quantized = value / 100 * 100;
+                wireKey = "FanSwitchSpeed";
+                wireValue = quantized.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.FanSwitchSpeed == quantized;
+                break;
+            case GcuCustomWriteField.FanSwitchSpeedEnabled when value is 0 or 1:
+                wireKey = "FanSwitchSpeedEnabled";
+                wireValue = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                confirmed = current => current.FanSwitchSpeedEnabled == (value == 1);
+                break;
+            default:
+                return false;
+        }
+        rejection = "";
+        return true;
+    }
+
+    private static bool CurveMatches(
+        FanCurveTable? table,
+        FanCurveTarget target,
+        IReadOnlyList<int> duties)
+    {
+        if (table is null || table.Curve(target).Count != 16 || duties.Count != 16) return false;
+        IReadOnlyList<FanCurvePoint> points = table.Curve(target);
+        return points.Select(point => point.Duty).SequenceEqual(duties);
+    }
+
     private CancellationTokenSource LinkedSession(CancellationToken ct)
     {
         lock (_sync)
@@ -234,12 +525,15 @@ public sealed class GcuController : IAsyncDisposable
         lock (_sync)
         {
             if (_disposed || !_snapshot.IsConnected || !_transport.IsConnected || _session?.IsCancellationRequested != false) return;
-            var next = GcuMessageParser.Apply(_snapshot, topic, payload, _time.GetUtcNow(), out bool modeReported);
+            var next = GcuMessageParser.Apply(_snapshot, topic, payload, _time.GetUtcNow(),
+                out bool modeReported, out bool customSettingsReported, out bool fanTableReported);
             // When available, the operating system is the sole power source.
             // A delayed vendor message must not replace a fresh unplugged/unknown reading.
             if (_readAcPower is not null)
                 next = next with { IsAc = _snapshot.IsAc, IsAcUpdatedAt = _snapshot.IsAcUpdatedAt };
             if (modeReported) _modeVersion++;
+            if (customSettingsReported) _customSettingsVersion++;
+            if (fanTableReported) _fanTableVersion++;
             changed = next != _snapshot;
             _snapshot = next;
         }
@@ -273,7 +567,13 @@ public sealed class GcuController : IAsyncDisposable
 
     private void SetDisconnected(string? error)
     {
-        lock (_sync) { _snapshot = new GcuSnapshot { LastError = error }; _modeVersion = 0; }
+        lock (_sync)
+        {
+            _snapshot = new GcuSnapshot { LastError = error };
+            _modeVersion = 0;
+            _customSettingsVersion = 0;
+            _fanTableVersion = 0;
+        }
         RaiseChanged();
     }
 

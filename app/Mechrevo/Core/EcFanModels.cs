@@ -10,6 +10,31 @@ public static class EcFanRegisters
     public const int GpuFanRpmHigh = 1132;
     public const int FanSafetyFlags = 1957;
     public const int GenericThermalFlags = 1992;
+
+    public static IReadOnlyList<int> AllReadAddresses { get; } =
+    [
+        CpuFanRpmHigh,
+        CpuFanRpmLow,
+        GpuFanRpmHigh,
+        GpuFanRpmLow,
+        FanSafetyFlags,
+        GenericThermalFlags
+    ];
+}
+
+/// <summary>Read-only bytes returned by the vendor ACPI driver.</summary>
+public sealed record EcRegisterSnapshot
+{
+    public IReadOnlyDictionary<int, byte> Registers { get; init; } = new Dictionary<int, byte>();
+    public DateTimeOffset? UpdatedAt { get; init; }
+    public int? ErrorCode { get; init; }
+    public string? LastError { get; init; }
+
+    public bool IsComplete(IEnumerable<int> expectedAddresses)
+    {
+        ArgumentNullException.ThrowIfNull(expectedAddresses);
+        return LastError is null && expectedAddresses.All(Registers.ContainsKey);
+    }
 }
 
 /// <summary>Direct EC observations stay separate from vendor-service telemetry.</summary>

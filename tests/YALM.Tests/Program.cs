@@ -17,6 +17,10 @@ internal static class Program
             ("fields expire independently", FieldsExpireIndependently),
             ("EC fan readings decode RPM and protection", EcFanReadingsDecode),
             ("incomplete or impossible EC readings are rejected", InvalidEcReadingsRejected),
+            ("EC register snapshots report completeness explicitly", EcRegisterSnapshotCompleteness),
+            ("display route uses panel adapter and dGPU presence", GpuRouteInferenceUsesBothSignals),
+            ("GPU driver power range is read without a fixed cap", GpuDriverPowerRangeParses),
+            ("custom settings and fan table parse", CustomSettingsAndFanTableParse),
             ("connect subscribes before publishing queries", ConnectSubscribesBeforePublishing),
             ("telemetry initializes once per connection", TelemetryInitializesOncePerConnection),
             ("disconnect clears all readings", DisconnectClearsReadings),
@@ -24,6 +28,13 @@ internal static class Program
             ("old status cannot confirm a switch", OldStatusCannotConfirm),
             ("publish failure cannot report success", PublishFailureCannotReportSuccess),
             ("busy clicks do not duplicate commands", BusyClicksDoNotDuplicateCommands),
+            ("custom profile uses numeric index and confirms", CustomProfileUsesNumericIndex),
+            ("fan boost publishes one action and confirms", FanBoostPublishesAndConfirms),
+            ("fan boost requires custom mode before publishing", FanBoostRequiresCustomMode),
+            ("custom field validates range before publishing", CustomFieldRejectsOutOfRange),
+            ("custom field issues one wire field and confirms", CustomFieldPublishesOneFieldAndConfirms),
+            ("fan curve draft fills all five tail values", FanCurveDraftFillsTailValues),
+            ("fan curve validates and confirms exact readback", FanCurveValidatesAndConfirms),
             ("turbo requires support and AC", TurboRequiresSupportAndAc),
             ("fan duty never invents actual RPM", FanDutyNeverInventsRpm),
             ("fan duty accepts zero and rejects invalid values", FanDutyRejectsInvalidValues),
@@ -155,6 +166,88 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task EcRegisterSnapshotCompleteness()
+    {
+        var complete = new EcRegisterSnapshot
+        {
+            Registers = new Dictionary<int, byte> { [1] = 10, [2] = 20 },
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        Assert.True(complete.IsComplete([1, 2]), "all requested registers should be complete");
+        Assert.False(complete.IsComplete([1, 3]), "a missing register must be reported as incomplete");
+
+        var failed = complete with { LastError = "read failed" };
+        Assert.False(failed.IsComplete([1, 2]), "an explicit read failure must be incomplete");
+        return Task.CompletedTask;
+    }
+
+    private static Task GpuRouteInferenceUsesBothSignals()
+    {
+        Assert.Equal(
+            InternalPanelAdapter.Integrated,
+            GpuRouteInference.ClassifyAdapterPath(@"\\?\PCI#VEN_8086&DEV_A78B"),
+            "Intel adapter path should be integrated");
+        Assert.Equal(
+            InternalPanelAdapter.Discrete,
+            GpuRouteInference.ClassifyAdapterPath(@"\\?\PCI#VEN_10DE&DEV_28E0"),
+            "NVIDIA adapter path should be discrete");
+        Assert.Equal(
+            GpuDisplayRoute.Direct,
+            GpuRouteInference.Infer(InternalPanelAdapter.Discrete, DgpuPresence.Present),
+            "discrete internal panel should mean direct route");
+        Assert.Equal(
+            GpuDisplayRoute.Hybrid,
+            GpuRouteInference.Infer(InternalPanelAdapter.Integrated, DgpuPresence.Present),
+            "integrated panel with an active dGPU should mean hybrid route");
+        Assert.Equal(
+            GpuDisplayRoute.Unknown,
+            GpuRouteInference.Infer(InternalPanelAdapter.Integrated, DgpuPresence.Unknown),
+            "unknown dGPU presence cannot confirm hybrid route");
+        return Task.CompletedTask;
+    }
+
+    private static Task GpuDriverPowerRangeParses()
+    {
+        Assert.True(GpuDriverPower.TryParse(
+            "NVIDIA GeForce RTX 4060 Laptop GPU, 14.14, N/A, 5, 140, 115",
+            out GpuDriverPower? power, out string error), error);
+        Assert.Equal(5d, power!.MinimumLimit, "minimum driver limit should be read");
+        Assert.Equal(140d, power.MaximumLimit, "maximum driver limit should be read");
+        Assert.Equal(115d, power.DefaultLimit, "default driver limit should be read");
+        Assert.Null(power.CurrentLimit, "N/A must remain unknown instead of becoming zero");
+        return Task.CompletedTask;
+    }
+
+    private static Task CustomSettingsAndFanTableParse()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = GcuMessageParser.Apply(new GcuSnapshot { IsConnected = true },
+            "Fan/Status",
+            "{\"OperatingMode\":3,\"CustomProfileIndex\":1,\"ProfileName\":\"Mode4_Profile2\"," +
+            "\"CPU_PL1\":75,\"CPU_PL1Minimum\":10,\"CPU_PL1Maximum\":130," +
+            "\"CPU_PL2\":75,\"CPU_PL2Minimum\":10,\"CPU_PL2Maximum\":130," +
+            "\"CPU_PL4\":200,\"CPU_PL4Minimum\":10,\"CPU_PL4Maximum\":200," +
+            "\"CPU_TccOffset\":5,\"CPU_TccOffsetSwitch\":0,\"FAN_FanSwitchSpeed\":300," +
+            "\"FAN_FanSwitchSpeedEnabled\":0,\"FAN_TableName\":\"M4T2\",\"FanBoostEnable\":0}",
+            now, out _, out bool customReported, out _);
+
+        Assert.True(customReported, "known custom fields should be reported");
+        Assert.Equal(1, snapshot.CustomSettings?.ProfileIndex, "custom profile index should parse");
+        Assert.Equal("Mode4_Profile2", snapshot.CustomSettings?.ProfileName, "profile name should parse");
+        Assert.Equal(95, snapshot.CustomSettings?.TccTarget, "TCC target should be derived from TjMax");
+        Assert.True(snapshot.IsCustomSettingsFresh(now), "custom settings should be fresh");
+
+        snapshot = GcuMessageParser.Apply(snapshot, "Fan/Table", CurveTableJson(true, false, CpuDuty()), now,
+            out _, out _, out bool tableReported);
+
+        Assert.True(tableReported, "fan table should be reported");
+        Assert.Equal("M4T2", snapshot.FanTable?.Name, "fan table name should parse");
+        Assert.Equal(16, snapshot.FanTable?.Cpu.Count, "CPU curve should retain all slots");
+        Assert.Equal(16, snapshot.FanTable?.Gpu.Count, "GPU curve should retain all slots");
+        Assert.True(snapshot.IsFanTableFresh(now), "fan table should be fresh");
+        return Task.CompletedTask;
+    }
+
     private static async Task ConnectSubscribesBeforePublishing()
     {
         await using var fake = new FakeTransport { RejectPublishBeforeSubscribe = true };
@@ -281,6 +374,141 @@ internal static class Program
         gate.TrySetResult();
         var firstResult = await first;
         Assert.False(firstResult.ServiceConfirmed, "no readback cannot confirm");
+    }
+
+    private static async Task CustomProfileUsesNumericIndex()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 0);
+        fake.Published.Clear();
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("GETSTATUS", StringComparison.Ordinal))
+                SeedCustomState(transport, profile: 1);
+            return Task.CompletedTask;
+        };
+
+        var result = await controller.SetCustomProfileAsync(1);
+
+        Assert.Equal(GcuWriteStatus.Confirmed, result.Status, "fresh custom profile readback should confirm");
+        using var command = JsonDocument.Parse(fake.Published[0].Payload);
+        Assert.Equal("OPERATING_CUSTOM_MODE", command.RootElement.GetProperty("Action").GetString(), "custom action");
+        Assert.Equal(1, command.RootElement.GetProperty("ProfileIndex").GetInt32(), "profile index must be numeric");
+        Assert.Equal("LCHWOC/Control", fake.Published[1].Topic, "custom run flag follows mode request");
+    }
+
+    private static async Task FanBoostPublishesAndConfirms()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 1, fanBoost: false);
+        fake.Published.Clear();
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("GETSTATUS", StringComparison.Ordinal))
+                SeedCustomState(transport, profile: 1, fanBoost: true);
+            return Task.CompletedTask;
+        };
+
+        var result = await controller.SetFanBoostAsync(true);
+
+        Assert.Equal(GcuWriteStatus.Confirmed, result.Status, "fan boost readback should confirm");
+        Assert.Equal(1, fake.Published.Count(x => x.Payload.Contains("FAN_BOOST_ON", StringComparison.Ordinal)),
+            "only one fan boost command should be published");
+    }
+
+    private static async Task FanBoostRequiresCustomMode()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedReadyState(fake, mode: 1, ac: true);
+        fake.Published.Clear();
+
+        var result = await controller.SetFanBoostAsync(true);
+
+        Assert.Equal(GcuWriteStatus.Rejected, result.Status, "fan boost outside custom mode must be rejected");
+        Assert.Equal(0, fake.Published.Count, "rejected fan boost must not publish");
+    }
+
+    private static async Task CustomFieldRejectsOutOfRange()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 1);
+        fake.Published.Clear();
+
+        var result = await controller.SetCustomFieldAsync(GcuCustomWriteField.Pl1, 500);
+
+        Assert.Equal(GcuWriteStatus.Rejected, result.Status, "out-of-range PL1 must be rejected");
+        Assert.Equal(0, fake.Published.Count, "rejected field must not publish");
+    }
+
+    private static async Task CustomFieldPublishesOneFieldAndConfirms()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 1, pl1: 75);
+        fake.Published.Clear();
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("GETSTATUS", StringComparison.Ordinal))
+                SeedCustomState(transport, profile: 1, pl1: 80);
+            return Task.CompletedTask;
+        };
+
+        var result = await controller.SetCustomFieldAsync(GcuCustomWriteField.Pl1, 80);
+
+        Assert.Equal(GcuWriteStatus.Confirmed, result.Status, "fresh PL1 readback should confirm");
+        using var command = JsonDocument.Parse(fake.Published[0].Payload);
+        Assert.Equal("SET_OPERATING_MODE_DETAIL", command.RootElement.GetProperty("Action").GetString(), "single field action");
+        Assert.Equal("80", command.RootElement.GetProperty("PL1").GetString(), "single PL1 value should be a string");
+        Assert.Equal(2, command.RootElement.EnumerateObject().Count(), "payload must contain only action and one field");
+    }
+
+    private static async Task FanCurveValidatesAndConfirms()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 1);
+        int[] original = CpuDuty();
+        int[] changed = original.ToArray();
+        changed[10] = changed[11] = changed[12] = changed[13] = changed[14] = changed[15] = 90;
+        fake.Emit("Fan/Table", CurveTableJson(true, false, original));
+        Assert.True(controller.Snapshot.IsFanTableFresh(), "fixture fan table should be fresh");
+        fake.Published.Clear();
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("GET_FAN_SPEED_CURVE_SETTING", StringComparison.Ordinal))
+                transport.Emit("Fan/Table", CurveTableJson(true, false, changed));
+            return Task.CompletedTask;
+        };
+
+        var rejected = await controller.SetFanCurveAsync(FanCurveTarget.Cpu, new int[15]);
+        Assert.Equal(GcuWriteStatus.Rejected, rejected.Status, "short curves must be rejected");
+        int[] inconsistentTail = changed.ToArray();
+        inconsistentTail[15] = 91;
+        rejected = await controller.SetFanCurveAsync(FanCurveTarget.Cpu, inconsistentTail);
+        Assert.Equal(GcuWriteStatus.Rejected, rejected.Status, "inconsistent tail must be rejected");
+        Assert.Equal(0, fake.Published.Count, "invalid curves must not publish");
+        var result = await controller.SetFanCurveAsync(FanCurveTarget.Cpu, changed);
+
+        Assert.Equal(GcuWriteStatus.Confirmed, result.Status, "exact curve readback should confirm");
+        using var command = JsonDocument.Parse(fake.Published[0].Payload);
+        Assert.Equal("SET_FAN_SPEED_CURVE_SETTING", command.RootElement.GetProperty("Action").GetString(), "curve action");
+        Assert.Equal("CPU", command.RootElement.GetProperty("Type").GetString(), "curve target");
+        Assert.Equal("90", command.RootElement.GetProperty("T15").GetString(), "all 16 duties must be sent as strings");
+    }
+
+    private static Task FanCurveDraftFillsTailValues()
+    {
+        int[] editable = [0, 30, 30, 35, 45, 55, 60, 70, 80, 90, 91];
+        Assert.True(FanCurveDraft.TryBuild(editable, out int[] duties, out string error), error);
+        Assert.Equal(16, duties.Length, "draft should contain all sixteen service slots");
+        Assert.Equal(91, duties[10], "last editable point should be retained");
+        Assert.True(duties.Skip(11).All(value => value == 91),
+            "all five tail slots should follow the last editable point");
+        return Task.CompletedTask;
     }
 
     private static async Task TurboRequiresSupportAndAc()
@@ -517,6 +745,49 @@ internal static class Program
     {
         fake.Emit("Fan/Status", $"{{\"OperatingMode\":{mode},\"IsAC\":{ac.ToString().ToLowerInvariant()},\"TurboModeSupport\":true}}");
         fake.Emit("System/FanInfo", "{\"CpuFanRpm\":1000,\"GpuFanRpm\":1100}");
+    }
+
+    private static void SeedCustomState(
+        FakeTransport fake,
+        int profile,
+        int pl1 = 75,
+        bool fanBoost = false)
+    {
+        string message =
+            $"{{\"OperatingMode\":3,\"CustomProfileIndex\":{profile}," +
+            $"\"ProfileName\":\"Mode4_Profile{profile + 1}\",\"IsAC\":true,\"TurboModeSupport\":true," +
+            "\"CPU_PL1\":75,\"CPU_PL1Minimum\":10,\"CPU_PL1Maximum\":130," +
+            "\"CPU_PL2\":75,\"CPU_PL2Minimum\":10,\"CPU_PL2Maximum\":130," +
+            "\"CPU_PL4\":200,\"CPU_PL4Minimum\":10,\"CPU_PL4Maximum\":200," +
+            "\"CPU_TccOffset\":5,\"CPU_TccOffsetSwitch\":0," +
+            "\"FAN_FanSwitchSpeed\":300,\"FAN_FanSwitchSpeedEnabled\":0," +
+            $"\"FAN_TableName\":\"M4T2\",\"FanBoostEnable\":{(fanBoost ? 1 : 0)}}}";
+        fake.Emit("Fan/Status",
+            message.Replace("\"CPU_PL1\":75", $"\"CPU_PL1\":{pl1}", StringComparison.Ordinal));
+        fake.Emit("System/FanInfo", "{\"CpuFanRpm\":1000,\"GpuFanRpm\":1100}");
+    }
+
+    private static int[] CpuDuty() =>
+        [0, 30, 30, 35, 45, 55, 60, 70, 80, 90, 95, 95, 95, 95, 95, 95];
+
+    private static string CurveTableJson(bool activated, bool respective, IReadOnlyList<int> cpuDuty)
+    {
+        string cpu = CurveJson(cpuDuty);
+        string gpu = CurveJson(cpuDuty);
+        return $"{{\"Activated\":{activated.ToString().ToLowerInvariant()}," +
+            "\"Name\":\"M4T2\"," +
+            $"\"FanControlRespective\":{respective.ToString().ToLowerInvariant()}," +
+            "\"CpuTemp_DefaultMaxLevel\":11,\"GpuTemp_DefaultMaxLevel\":11," +
+            $"\"CPU\":[{cpu}],\"GPU\":[{gpu}]}}";
+    }
+
+    private static string CurveJson(IReadOnlyList<int> duties)
+    {
+        return string.Join(",", Enumerable.Range(0, 16).Select(index =>
+        {
+            int temperature = index < 11 ? 50 + index : 255;
+            return $"{{\"ID\":{index},\"UpT\":{temperature},\"DownT\":{temperature},\"Duty\":{duties[index]}}}";
+        }));
     }
 
     private static async Task WaitUntil(Func<bool> condition)

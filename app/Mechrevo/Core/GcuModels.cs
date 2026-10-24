@@ -51,6 +51,8 @@ public sealed record GcuSnapshot
     public int? GpuTemperature { get; init; }
     public bool? IsAc { get; init; }
     public bool? TurboSupported { get; init; }
+    public GcuCustomSettings? CustomSettings { get; init; }
+    public FanCurveTable? FanTable { get; init; }
     public DateTimeOffset? ModeUpdatedAt { get; init; }
     public DateTimeOffset? CpuFanUpdatedAt { get; init; }
     public DateTimeOffset? GpuFanUpdatedAt { get; init; }
@@ -60,6 +62,8 @@ public sealed record GcuSnapshot
     public DateTimeOffset? GpuTemperatureUpdatedAt { get; init; }
     public DateTimeOffset? IsAcUpdatedAt { get; init; }
     public DateTimeOffset? TurboSupportedUpdatedAt { get; init; }
+    public DateTimeOffset? CustomSettingsUpdatedAt { get; init; }
+    public DateTimeOffset? FanTableUpdatedAt { get; init; }
 
     public bool IsStatusFresh(DateTimeOffset? now = null) =>
         Mode.HasValue && IsAc.HasValue && Fresh(ModeUpdatedAt, now) && Fresh(IsAcUpdatedAt, now);
@@ -71,6 +75,10 @@ public sealed record GcuSnapshot
     public bool IsGpuFanDutyFresh(DateTimeOffset? now = null) => GpuFanDuty.HasValue && Fresh(GpuFanDutyUpdatedAt, now);
     public bool IsCpuTemperatureFresh(DateTimeOffset? now = null) => CpuTemperature.HasValue && Fresh(CpuTemperatureUpdatedAt, now);
     public bool IsGpuTemperatureFresh(DateTimeOffset? now = null) => GpuTemperature.HasValue && Fresh(GpuTemperatureUpdatedAt, now);
+    public bool IsCustomSettingsFresh(DateTimeOffset? now = null) =>
+        CustomSettings is not null && Fresh(CustomSettingsUpdatedAt, now);
+    public bool IsFanTableFresh(DateTimeOffset? now = null) =>
+        FanTable is not null && Fresh(FanTableUpdatedAt, now);
     public bool CanSwitchMode(PerformanceMode mode, DateTimeOffset? now = null) =>
         Enum.IsDefined(mode) && IsStatusFresh(now) && IsFanFresh(now) &&
         (mode != PerformanceMode.Turbo || (TurboSupported == true && IsAc == true));

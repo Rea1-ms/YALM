@@ -15,16 +15,6 @@ public sealed class EcFanReader
     private const uint EcReadControlCode = 0x9C40A488;
     private const int RequestDelayMilliseconds = 10;
 
-    private static readonly int[] Addresses =
-    [
-        EcFanRegisters.CpuFanRpmHigh,
-        EcFanRegisters.CpuFanRpmLow,
-        EcFanRegisters.GpuFanRpmHigh,
-        EcFanRegisters.GpuFanRpmLow,
-        EcFanRegisters.FanSafetyFlags,
-        EcFanRegisters.GenericThermalFlags
-    ];
-
     private readonly object _sync = new();
     private readonly TimeProvider _time;
 
@@ -36,7 +26,33 @@ public sealed class EcFanReader
     public Task<EcFanSnapshot> ReadAsync(CancellationToken ct = default) =>
         Task.Run(() => Read(ct), ct);
 
+    /// <summary>
+    /// Reads an explicit, bounded list of EC addresses. The driver's read IOCTL
+    /// requires a read/write handle, but this method never sends a write request.
+    /// </summary>
+    public Task<EcRegisterSnapshot> ReadRegistersAsync(
+        IEnumerable<int> addresses,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(addresses);
+        int[] requested = addresses.Distinct().Order().ToArray();
+        if (requested.Length == 0)
+            throw new ArgumentException("至少需要一个 EC 地址。", nameof(addresses));
+        if (requested.Any(address => address is < 0 or > ushort.MaxValue))
+            throw new ArgumentOutOfRangeException(nameof(addresses), "EC 地址超出 16 位范围。");
+        return Task.Run(() => ReadRegisters(requested, ct), ct);
+    }
+
     private EcFanSnapshot Read(CancellationToken ct)
+    {
+        EcRegisterSnapshot snapshot = ReadRegisters(EcFanRegisters.AllReadAddresses, ct);
+        if (snapshot.LastError is not null || !snapshot.IsComplete(EcFanRegisters.AllReadAddresses))
+            return ReadFailure(snapshot.ErrorCode ?? 13, snapshot.UpdatedAt ?? _time.GetUtcNow());
+
+        return EcFanDecoder.Decode(snapshot.Registers, snapshot.UpdatedAt ?? _time.GetUtcNow());
+    }
+
+    private EcRegisterSnapshot ReadRegisters(IReadOnlyList<int> addresses, CancellationToken ct)
     {
         lock (_sync)
         {
@@ -56,11 +72,11 @@ public sealed class EcFanReader
             if (device.IsInvalid)
             {
                 int errorCode = Marshal.GetLastWin32Error();
-                return ReadFailure(errorCode, observedAt);
+                return RegisterFailure(errorCode, observedAt);
             }
 
-            var registers = new Dictionary<int, byte>(Addresses.Length);
-            foreach (int address in Addresses)
+            var registers = new Dictionary<int, byte>(addresses.Count);
+            foreach (int address in addresses)
             {
                 ct.ThrowIfCancellationRequested();
                 byte[] input = BitConverter.GetBytes((uint)address);
@@ -76,15 +92,26 @@ public sealed class EcFanReader
                     IntPtr.Zero);
 
                 if (!succeeded || bytesReturned < output.Length)
-                    return ReadFailure(succeeded ? 13 : Marshal.GetLastWin32Error(), observedAt);
+                    return RegisterFailure(succeeded ? 13 : Marshal.GetLastWin32Error(), observedAt);
 
                 registers[address] = output[0];
                 Thread.Sleep(RequestDelayMilliseconds);
             }
 
-            return EcFanDecoder.Decode(registers, observedAt);
+            return new EcRegisterSnapshot
+            {
+                Registers = registers,
+                UpdatedAt = observedAt
+            };
         }
     }
+
+    private static EcRegisterSnapshot RegisterFailure(int errorCode, DateTimeOffset observedAt) => new()
+    {
+        ErrorCode = errorCode,
+        LastError = $"EC 寄存器读取失败（错误 {errorCode}）。",
+        UpdatedAt = observedAt
+    };
 
     private static EcFanSnapshot ReadFailure(int errorCode, DateTimeOffset observedAt) => new()
     {
