@@ -53,6 +53,14 @@ public sealed record GcuSnapshot
     public bool? TurboSupported { get; init; }
     public GcuCustomSettings? CustomSettings { get; init; }
     public FanCurveTable? FanTable { get; init; }
+    public GcuKeyboardSettings? Keyboard { get; init; }
+    public bool? FnLocked { get; init; }
+    public int? CpuUsage { get; init; }
+    public int? GpuUsage { get; init; }
+    public DateTimeOffset? CpuUsageUpdatedAt { get; init; }
+    public DateTimeOffset? GpuUsageUpdatedAt { get; init; }
+    public DateTimeOffset? KeyboardUpdatedAt { get; init; }
+    public DateTimeOffset? FnLockUpdatedAt { get; init; }
     public DateTimeOffset? ModeUpdatedAt { get; init; }
     public DateTimeOffset? CpuFanUpdatedAt { get; init; }
     public DateTimeOffset? GpuFanUpdatedAt { get; init; }
@@ -79,6 +87,10 @@ public sealed record GcuSnapshot
         CustomSettings is not null && Fresh(CustomSettingsUpdatedAt, now);
     public bool IsFanTableFresh(DateTimeOffset? now = null) =>
         FanTable is not null && Fresh(FanTableUpdatedAt, now);
+    public bool IsKeyboardFresh(DateTimeOffset? now = null) => Keyboard is not null && Fresh(KeyboardUpdatedAt, now);
+    public bool IsFnLockFresh(DateTimeOffset? now = null) => FnLocked.HasValue && Fresh(FnLockUpdatedAt, now);
+    public bool IsCpuUsageFresh(DateTimeOffset? now = null) => CpuUsage.HasValue && Fresh(CpuUsageUpdatedAt, now);
+    public bool IsGpuUsageFresh(DateTimeOffset? now = null) => GpuUsage.HasValue && Fresh(GpuUsageUpdatedAt, now);
     public bool CanSwitchMode(PerformanceMode mode, DateTimeOffset? now = null) =>
         Enum.IsDefined(mode) && IsStatusFresh(now) && IsFanFresh(now) &&
         (mode != PerformanceMode.Turbo || (TurboSupported == true && IsAc == true));

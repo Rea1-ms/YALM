@@ -9,9 +9,19 @@ namespace GHelper
         (RCheckBox box, string key)[] blocks;
         int mode;
         bool updating;
+        private readonly HardwareOverlay? overlay;
+        private readonly Form? host;
+        private readonly bool limited;
 
-        public OverlayConfig()
+        public OverlayConfig() : this(() => Program.settingsForm.ToggleOverlay(),
+            () => Program.settingsForm.ToggleOverlayGameOnly(), Program.hardwareOverlay, Program.settingsForm) { }
+
+        public OverlayConfig(Action toggleOverlay, Action toggleGameOnly, HardwareOverlay? hardwareOverlay,
+            Form? owner, bool limitedTelemetry = false, bool readOnly = false)
         {
+            overlay = hardwareOverlay;
+            host = owner;
+            limited = limitedTelemetry;
             InitializeComponent();
             InitTheme(true);
 
@@ -63,8 +73,20 @@ namespace GHelper
             buttonCpuColor.SwatchColor = HardwareOverlay.CpuColor;
             buttonGpuColor.SwatchColor = HardwareOverlay.GpuColor;
 
-            checkEnable.CheckedChanged += (s, e) => { if (checkEnable.Checked != AppConfig.IsOverlay()) Program.settingsForm.ToggleOverlay(); };
-            checkGameOnly.CheckedChanged += (s, e) => { if (checkGameOnly.Checked != AppConfig.IsOverlayGameOnly()) Program.settingsForm.ToggleOverlayGameOnly(); };
+            checkEnable.CheckedChanged += (s, e) => { if (checkEnable.Checked != AppConfig.IsOverlay()) toggleOverlay(); };
+            checkGameOnly.CheckedChanged += (s, e) => { if (checkGameOnly.Checked != AppConfig.IsOverlayGameOnly()) toggleGameOnly(); };
+            checkEnable.Enabled = checkGameOnly.Enabled = !readOnly;
+            if (limitedTelemetry)
+            {
+                foreach (var check in new[] { checkChart, checkPower, checkRam, checkLabels })
+                {
+                    check.Checked = false;
+                    check.Enabled = false;
+                }
+                labelHotkeys.Text = "• Ctrl + Shift + Alt + O：开关屏幕叠加\n" +
+                    "• 按住 Ctrl + Shift + Alt 后拖动、单击、滚轮：移动、切换模式、缩放\n" +
+                    "当前显示已接入的温度、实际转速、占用和电量；缺失读数留空。";
+            }
 
             buttonLight.BorderColor = colorEco;
             buttonDefault.BorderColor = colorStandard;
@@ -83,12 +105,19 @@ namespace GHelper
             buttonReset.Click += ButtonReset_Click;
 
             Shown += (s, e) => FormPosition();
+            Activated += (_, _) =>
+            {
+                checkEnable.Checked = AppConfig.IsOverlay();
+                checkGameOnly.Checked = AppConfig.IsOverlayGameOnly();
+            };
         }
 
         public void FormPosition()
         {
-            Top = Program.settingsForm.Top;
-            Left = Program.settingsForm.Left - Width - 5;
+            if (host is null) return;
+            Rectangle area = Screen.FromControl(host).WorkingArea;
+            Top = Math.Clamp(host.Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
+            Left = Math.Max(area.Left, host.Left - Width - 5);
         }
 
         private string AlphaText() => Math.Round(trackAlpha.Value * 100.0 / 255) + "%";
@@ -110,14 +139,16 @@ namespace GHelper
             trackAlpha.Value = 128;
             buttonCpuColor.SwatchColor = HardwareOverlay.CpuColor;
             buttonGpuColor.SwatchColor = HardwareOverlay.GpuColor;
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void VisualiseBlocks()
         {
             updating = true;
             for (int i = 0; i < modeButtons.Length; i++) modeButtons[i].Activated = i == mode;
-            foreach (var (box, key) in blocks) box.Checked = HardwareOverlay.BlockShown(key, mode);
+            foreach (var (box, key) in blocks)
+                box.Checked = !(limited && (box == checkChart || box == checkPower || box == checkRam || box == checkLabels)) &&
+                    HardwareOverlay.BlockShown(key, mode);
             int battery = HardwareOverlay.BatteryState(mode);
             checkBattery.CheckState = battery < 0 ? CheckState.Indeterminate : (CheckState)battery;
             updating = false;
@@ -128,7 +159,7 @@ namespace GHelper
             mode = Array.IndexOf(modeButtons, sender);
             AppConfig.Set("overlay_mode", mode);
             VisualiseBlocks();
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void Block_CheckedChanged(object? sender, EventArgs e)
@@ -136,7 +167,7 @@ namespace GHelper
             if (updating) return;
             foreach (var (box, key) in blocks)
                 if (box == sender) AppConfig.Set(HardwareOverlay.ModeKey(key, mode), box.Checked ? 1 : 0);
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void Battery_CheckStateChanged(object? sender, EventArgs e)
@@ -144,21 +175,21 @@ namespace GHelper
             if (updating) return;
             int state = checkBattery.CheckState == CheckState.Indeterminate ? -1 : (int)checkBattery.CheckState;
             AppConfig.Set(HardwareOverlay.ModeKey("overlay_show_battery", mode), state);
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void TrackScale_ValueChanged(object? sender, EventArgs e)
         {
             labelSize.Text = trackScale.Value + "%";
             AppConfig.Set("overlay_scale_percent", trackScale.Value);
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void TrackAlpha_ValueChanged(object? sender, EventArgs e)
         {
             labelAlpha.Text = AlphaText();
             AppConfig.Set("overlay_alpha", trackAlpha.Value);
-            Program.hardwareOverlay?.RefreshSettings();
+            overlay?.RefreshSettings();
         }
 
         private void PickColor(string key, RColorButton button, Color initial)
@@ -168,7 +199,7 @@ namespace GHelper
             {
                 AppConfig.Set(key, $"{c.R:X2}{c.G:X2}{c.B:X2}");
                 button.SwatchColor = c;
-                Program.hardwareOverlay?.RefreshSettings();
+                overlay?.RefreshSettings();
             };
             colorDlg.ShowDialog(this);
         }

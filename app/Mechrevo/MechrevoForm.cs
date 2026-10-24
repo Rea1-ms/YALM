@@ -2,7 +2,7 @@ using GHelper.UI;
 
 namespace YALM.Mechrevo;
 
-internal sealed class MechrevoForm : RForm
+internal sealed partial class MechrevoForm : RForm
 {
     private readonly MachineInfo _machine;
     private readonly bool _demo;
@@ -53,8 +53,8 @@ internal sealed class MechrevoForm : RForm
         Text = "YALM — " + (string.IsNullOrWhiteSpace(machine.DisplayName) ? "机械革命助手" : machine.DisplayName) + (demo ? " · 演示" : "");
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
-        ClientSize = new Size(500, 390);
-        MinimumSize = new Size(500, 390);
+        ClientSize = new Size(500, 440);
+        MinimumSize = new Size(500, 440);
         StartPosition = FormStartPosition.Manual;
         Padding = new Padding(18);
         AutoScroll = true;
@@ -121,6 +121,7 @@ internal sealed class MechrevoForm : RForm
         AddRow(layout, Heading(gpuTitle, _gpuValues, GHelper.Properties.Resources.icons8_video_card_32));
         _actualSpeeds.Margin = new Padding(0, 6, 0, 18);
         AddRow(layout, _actualSpeeds);
+        BuildKeyboardLayout(layout);
         AddRow(layout, _controlStatus);
         AddRow(layout, _actionStatus);
 
@@ -209,14 +210,21 @@ internal sealed class MechrevoForm : RForm
         _refreshTimer.Start();
         if (!_demo && _machine.SupportsModeControl) _ecRefreshTimer.Start();
         if (_smokeTest || _startupTest) _smokeTimer.Start();
-        if (_smokeTest) OpenCustomMode();
+        if (_smokeTest)
+        {
+            OpenCustomMode();
+            OpenKeyboardSettings();
+            OpenOverlayConfig();
+        }
         if (_autoConnect && !_demo) await ConnectAsync();
+        if (!_demo && !_startupTest && AppConfig.IsOverlay()) EnsureOverlay().StartOverlay();
     }
 
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
         PositionAtScreenCorner(Screen.PrimaryScreen ?? Screen.FromControl(this));
+        RegisterOverlayHotkey();
     }
 
     private void PositionAtScreenCorner(Screen screen)
@@ -410,6 +418,7 @@ internal sealed class MechrevoForm : RForm
     private void RenderSnapshot()
     {
         if (_closing || IsDisposed) return;
+        RenderKeyboard();
         if (_demo)
         {
             _connectionStatus.Text = "演示 · 未连接服务";
@@ -490,6 +499,7 @@ internal sealed class MechrevoForm : RForm
         _lifetime.Cancel();
         try
         {
+            CloseKeyboardAndOverlay();
             if (_customModeForm is { IsDisposed: false })
                 _customModeForm.Close();
             if (_controller is not null)

@@ -1,0 +1,246 @@
+{
+  "FanTable": {
+    "Activated": false,
+    "Name": "M3T1",
+    "FanControlRespective": false,
+    "CpuTemp_DefaultMaxLevel": 11,
+    "GpuTemp_DefaultMaxLevel": 11,
+    "CPU": [
+      {
+        "ID": 0,
+        "UpT": 0,
+        "DownT": 48,
+        "Duty": 0
+      },
+      {
+        "ID": 1,
+        "UpT": 54,
+        "DownT": 50,
+        "Duty": 30
+      },
+      {
+        "ID": 2,
+        "UpT": 59,
+        "DownT": 64,
+        "Duty": 30
+      },
+      {
+        "ID": 3,
+        "UpT": 63,
+        "DownT": 67,
+        "Duty": 35
+      },
+      {
+        "ID": 4,
+        "UpT": 66,
+        "DownT": 70,
+        "Duty": 45
+      },
+      {
+        "ID": 5,
+        "UpT": 69,
+        "DownT": 73,
+        "Duty": 55
+      },
+      {
+        "ID": 6,
+        "UpT": 72,
+        "DownT": 76,
+        "Duty": 60
+      },
+      {
+        "ID": 7,
+        "UpT": 75,
+        "DownT": 79,
+        "Duty": 70
+      },
+      {
+        "ID": 8,
+        "UpT": 78,
+        "DownT": 82,
+        "Duty": 80
+      },
+      {
+        "ID": 9,
+        "UpT": 81,
+        "DownT": 85,
+        "Duty": 90
+      },
+      {
+        "ID": 10,
+        "UpT": 84,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 11,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 12,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 13,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 14,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 15,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      }
+    ],
+    "GPU": [
+      {
+        "ID": 0,
+        "UpT": 0,
+        "DownT": 48,
+        "Duty": 0
+      },
+      {
+        "ID": 1,
+        "UpT": 56,
+        "DownT": 48,
+        "Duty": 0
+      },
+      {
+        "ID": 2,
+        "UpT": 56,
+        "DownT": 59,
+        "Duty": 30
+      },
+      {
+        "ID": 3,
+        "UpT": 58,
+        "DownT": 62,
+        "Duty": 35
+      },
+      {
+        "ID": 4,
+        "UpT": 61,
+        "DownT": 65,
+        "Duty": 45
+      },
+      {
+        "ID": 5,
+        "UpT": 64,
+        "DownT": 68,
+        "Duty": 55
+      },
+      {
+        "ID": 6,
+        "UpT": 67,
+        "DownT": 71,
+        "Duty": 60
+      },
+      {
+        "ID": 7,
+        "UpT": 70,
+        "DownT": 74,
+        "Duty": 70
+      },
+      {
+        "ID": 8,
+        "UpT": 73,
+        "DownT": 76,
+        "Duty": 80
+      },
+      {
+        "ID": 9,
+        "UpT": 75,
+        "DownT": 79,
+        "Duty": 90
+      },
+      {
+        "ID": 10,
+        "UpT": 78,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 11,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 12,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 13,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 14,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      },
+      {
+        "ID": 15,
+        "UpT": 255,
+        "DownT": 255,
+        "Duty": 95
+      }
+    ]
+  },
+  "Keyboard": {
+    "solution": "EC",
+    "type": "SingleZone",
+    "brightNess": "3",
+    "powerStatus": "Off",
+    "welcomeStatus": null,
+    "welcomeDirectionStatus": "LeftRight",
+    "ACBrightness": "3",
+    "DCBrightness": "0",
+    "auroraStatus": false,
+    "auroraExist": false,
+    "SingleZonePowerSupport": true,
+    "MonochromeIndex": "17",
+    "ManualIndex1": "1",
+    "ManualIndex2": "5",
+    "ManualIndex3": "9",
+    "ManualIndex4": "13",
+    "ManualIndex5": "21",
+    "ManualIndex6": "25",
+    "ManualInterval": "10",
+    "BreathingIndex": "1",
+    "DefaultData": "{\r\n  \"save_effect\": 15,\r\n  \"bSaved\": false,\r\n  \"MonochromeIndex\": 17,\r\n  \"ManualIndex1\": 1,\r\n  \"ManualIndex2\": 5,\r\n  \"ManualIndex3\": 9,\r\n  \"ManualIndex4\": 13,\r\n  \"ManualIndex5\": 21,\r\n  \"ManualIndex6\": 25,\r\n  \"ManualInterval\": 10,\r\n  \"BreathingIndex\": 1,\r\n  \"UserDefineColor\": {\r\n    \"isCircular\": false,\r\n    \"ColorBlocks\": 0,\r\n    \"ColorBuffer\": null\r\n  }\r\n}",
+    "color": {
+      "isCircular": false,
+      "ColorBlocks": 0,
+      "ColorBuffer": null
+    },
+    "effect": null,
+    "light": null,
+    "speed": null,
+    "direction": null,
+    "nv_save": null,
+    "rkgcolor": null,
+    "backgroundcolor": 0,
+    "alphabet": null,
+    "level": 0,
+    "powerstatus": 0,
+    "LogoSupport": false,
+    "HingeSupport": false,
+    "BaseSupport": false
+  }
+}

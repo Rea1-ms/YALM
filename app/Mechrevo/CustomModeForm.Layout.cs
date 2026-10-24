@@ -221,8 +221,10 @@ internal sealed partial class CustomModeForm
     private static GcuSnapshot DemoSnapshot()
     {
         var now = DateTimeOffset.UtcNow;
+        int[] up = [0, 54, 59, 63, 66, 69, 72, 75, 78, 81, 84];
+        int[] down = [48, 50, 64, 67, 70, 73, 76, 79, 82, 85, 255];
         var cpu = Enumerable.Range(0, 16).Select(i => new FanCurvePoint(i,
-            i > 10 ? 255 : 25 + i * 7, i > 10 ? 255 : 22 + i * 7, i == 0 ? 0 : Math.Min(i, 10) * 10)).ToArray();
+            i > 10 ? 255 : up[i], i > 10 ? 255 : down[i], i == 0 ? 0 : Math.Min(i, 10) * 10)).ToArray();
         var gpu = cpu.Select(p => p with { Duty = p.Id == 0 ? 0 : Math.Min(100, p.Duty + 5) }).ToArray();
         return new GcuSnapshot
         {

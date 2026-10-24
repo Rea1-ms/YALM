@@ -7,7 +7,10 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="Fixtures\real-service-status.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="Program.cs" />
+    <Compile Include="PeripheralTests.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\GcuKeyboardModels.cs" Link="Core\GcuKeyboardModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanModels.cs" Link="Core\EcFanModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GpuRouteModels.cs" Link="Core\GpuRouteModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanDecoder.cs" Link="Core\EcFanDecoder.cs" />

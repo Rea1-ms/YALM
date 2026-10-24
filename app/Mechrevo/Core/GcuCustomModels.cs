@@ -39,11 +39,17 @@ public sealed record FanCurvePoint(
     int DownTemperature,
     int Duty)
 {
-    public bool IsTail => UpTemperature == 255 || DownTemperature == 255;
+    // The last effective slot has a valid rising threshold and a 255 falling
+    // terminator. Only two terminators identify an unused tail slot.
+    public bool IsTail => UpTemperature == 255 && DownTemperature == 255;
 }
 
 public static class FanCurveDraft
 {
+    public static bool CanEdit(IReadOnlyList<FanCurvePoint>? curve) =>
+        curve is { Count: 16 } && curve.Take(11).All(point => point.UpTemperature < 255) &&
+        curve.Skip(11).All(point => point.IsTail);
+
     public static bool TryBuild(IReadOnlyList<int> editableDuties, out int[] duties, out string error)
     {
         ArgumentNullException.ThrowIfNull(editableDuties);

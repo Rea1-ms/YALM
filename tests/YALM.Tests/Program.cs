@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using YALM.Mechrevo;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly GcuConnectionOptions Options = new("test-client", "test-user", "test-password")
     {
@@ -21,6 +21,14 @@ internal static class Program
             ("display route uses panel adapter and dGPU presence", GpuRouteInferenceUsesBothSignals),
             ("GPU driver power range is read without a fixed cap", GpuDriverPowerRangeParses),
             ("custom settings and fan table parse", CustomSettingsAndFanTableParse),
+            ("real firmware end marker retains the last curve point", RealCurveTerminatorRetainsEffectivePoint),
+            ("real keyboard status keeps null effect and case-sensitive power", RealKeyboardStatusParses),
+            ("Fn lock is confirmed without fan telemetry", FnLockConfirmsIndependently),
+            ("cached Fn lock cannot confirm an unrelated setting frame", CachedFnLockCannotConfirm),
+            ("single-zone keyboard sends required fields and confirms", KeyboardEffectSendsRequiredFields),
+            ("missing keyboard effect readback never claims success", MissingKeyboardEffectCannotConfirm),
+            ("unsupported keyboard and invalid settings publish nothing", UnsupportedKeyboardRejectsWrites),
+            ("keyboard power uses fresh case-sensitive readback", KeyboardPowerConfirms),
             ("connect subscribes before publishing queries", ConnectSubscribesBeforePublishing),
             ("telemetry initializes once per connection", TelemetryInitializesOncePerConnection),
             ("disconnect clears all readings", DisconnectClearsReadings),
@@ -282,9 +290,10 @@ internal static class Program
         await controller.RefreshAsync();
         await controller.RefreshAsync();
         var refreshPublications = fake.Published.Skip(initialPublicationCount).ToArray();
-        Assert.Equal(4, refreshPublications.Length, "each refresh should query only fan and settings status");
+        Assert.Equal(6, refreshPublications.Length, "each refresh should query fan, settings and keyboard status");
         Assert.Equal(2, refreshPublications.Count(x => x.Topic == "Fan/Control"), "each refresh should query fan status once");
         Assert.Equal(2, refreshPublications.Count(x => x.Topic == "Setting/Control"), "each refresh should query settings once");
+        Assert.Equal(2, refreshPublications.Count(x => x.Topic == "Keyboard/Ctrl"), "each refresh should query keyboard once");
         foreach (var publication in refreshPublications)
         {
             using var payload = JsonDocument.Parse(publication.Payload);

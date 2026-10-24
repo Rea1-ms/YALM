@@ -90,7 +90,7 @@ internal sealed class FanCurveEditor : UserControl
 
     public void SetCurve(IReadOnlyList<FanCurvePoint>? curve, string identity, bool discardDraft)
     {
-        if (curve is null || curve.Count != 16 || curve.Take(11).Any(point => point.IsTail))
+        if (!FanCurveDraft.CanEdit(curve))
         {
             _points = [];
             _duties = _baseline = [];
@@ -99,7 +99,7 @@ internal sealed class FanCurveEditor : UserControl
             return;
         }
         bool sameShape = _points.Select(p => (p.Id, p.UpTemperature, p.DownTemperature))
-            .SequenceEqual(curve.Take(11).Select(p => (p.Id, p.UpTemperature, p.DownTemperature)));
+            .SequenceEqual(curve!.Take(11).Select(p => (p.Id, p.UpTemperature, p.DownTemperature)));
         if (!discardDraft && identity == _identity && sameShape &&
             _baseline.SequenceEqual(curve.Take(11).Select(point => point.Duty))) return;
         bool preserve = !discardDraft && HasChanges && identity == _identity && sameShape;
@@ -121,8 +121,9 @@ internal sealed class FanCurveEditor : UserControl
         {
             FanCurvePoint point = _points[i];
             int index = _rising.Points.AddXY(point.UpTemperature, _duties[i]);
-            _falling.Points.AddXY(point.DownTemperature, _duties[i]);
-            _rising.Points[index].ToolTip = $"升温 {point.UpTemperature} ℃ / 降温 {point.DownTemperature} ℃：{_duties[i]}%";
+            if (point.DownTemperature < 255)
+                _falling.Points.AddXY(point.DownTemperature, _duties[i]);
+            _rising.Points[index].ToolTip = PointTemperatures(point) + $"：{_duties[i]}%";
         }
         if (_points.Count > 0)
         {
@@ -147,7 +148,7 @@ internal sealed class FanCurveEditor : UserControl
                 return;
             }
             FanCurvePoint point = _points[_selected];
-            _point.Text = $"升温 {point.UpTemperature} ℃ / 降温 {point.DownTemperature} ℃ · {_duties[_selected]}%" +
+            _point.Text = PointTemperatures(point) + $" · {_duties[_selected]}%" +
                 (_selected == 0 ? "（固定）" : HasChanges ? " · 未应用" : "");
             _duty.Value = Math.Clamp(_duties[_selected], 0, 100);
             for (int i = 0; i < _rising.Points.Count; i++)
@@ -158,6 +159,10 @@ internal sealed class FanCurveEditor : UserControl
         }
         finally { _updating = false; }
     }
+
+    private static string PointTemperatures(FanCurvePoint point) =>
+        $"升温 {point.UpTemperature} ℃ / 降温 " +
+        (point.DownTemperature == 255 ? "结束" : $"{point.DownTemperature} ℃");
 
     private void SetDuty(int duty)
     {

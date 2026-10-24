@@ -53,6 +53,26 @@ internal static class GcuMessageParser
                     break;
                 case "Setting/Status":
                     snapshot = ApplyTurboSupport(snapshot, root, now);
+                    if (root.TryGetProperty("FnKey", out var fnElement))
+                    {
+                        bool? locked = fnElement.ValueKind == JsonValueKind.String ? fnElement.GetString() switch
+                        {
+                            "FNKEY_LOCK" => true, "FNKEY_UNLOCK" => false, _ => null
+                        } : null;
+                        snapshot = snapshot with { FnLocked = locked, FnLockUpdatedAt = locked.HasValue ? now : null };
+                    }
+                    break;
+                case "Keyboard/Status":
+                    // Frames describe saved configuration, including while idle lighting is off.
+                    // Keep the case-sensitive powerStatus separate from the unrelated powerstatus.
+                    var keyboard = new GcuKeyboardSettings
+                    {
+                        Type = String(root, "type"), Effect = String(root, "effect"),
+                        Brightness = root.TryGetProperty("brightNess", out var brightness) ? Integer(brightness, 0, 4) : null,
+                        MonochromeIndex = root.TryGetProperty("MonochromeIndex", out var color) ? Integer(color, 1, 30) : null,
+                        Power = String(root, "powerStatus") switch { "On" => true, "Off" => false, _ => null }
+                    };
+                    snapshot = snapshot with { Keyboard = keyboard, KeyboardUpdatedAt = now };
                     break;
                 case "Fan/Table":
                     if (TryParseFanTable(root, out FanCurveTable? table))
@@ -84,6 +104,11 @@ internal static class GcuMessageParser
                     }
                     break;
                 case "System/CpuInfo":
+                    if (root.TryGetProperty("CpuUsage", out var cpuUsage))
+                    {
+                        int? usage = Integer(cpuUsage, 0, 100);
+                        snapshot = snapshot with { CpuUsage = usage, CpuUsageUpdatedAt = usage.HasValue ? now : null };
+                    }
                     if (root.TryGetProperty("CpuTemperature", out var cpuElement))
                     {
                         int? temperature = Integer(cpuElement, 1, 125);
@@ -91,6 +116,11 @@ internal static class GcuMessageParser
                     }
                     break;
                 case "System/GpuInfo":
+                    if (root.TryGetProperty("GpuUsage", out var gpuUsage))
+                    {
+                        int? usage = Integer(gpuUsage, 0, 100);
+                        snapshot = snapshot with { GpuUsage = usage, GpuUsageUpdatedAt = usage.HasValue ? now : null };
+                    }
                     if (root.TryGetProperty("GpuTemperature", out var gpuElement))
                     {
                         int? temperature = Integer(gpuElement, 1, 125);
@@ -102,6 +132,10 @@ internal static class GcuMessageParser
         catch (JsonException) { }
         return snapshot;
     }
+
+    private static string? String(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String &&
+        !string.IsNullOrWhiteSpace(element.GetString()) ? element.GetString() : null;
 
     private static bool HasAnyCustomSetting(JsonElement root)
     {

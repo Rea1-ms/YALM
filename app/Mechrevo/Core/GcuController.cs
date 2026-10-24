@@ -9,7 +9,7 @@ namespace YALM.Mechrevo;
 public sealed class GcuController : IAsyncDisposable
 {
     private static readonly string[] Topics =
-        ["Fan/Status", "Fan/Table", "Setting/Status", "System/FanInfo", "System/CpuInfo", "System/GpuInfo"];
+        ["Fan/Status", "Fan/Table", "Setting/Status", "Keyboard/Status", "System/FanInfo", "System/CpuInfo", "System/GpuInfo"];
     private const string GetStatus = "{\"Action\":\"GETSTATUS\"}";
     private readonly IGcuTransport _transport;
     private readonly TimeProvider _time;
@@ -145,6 +145,88 @@ public sealed class GcuController : IAsyncDisposable
             requireCustomSettings: true,
             success: $"已切换到自定义 Profile-{profileIndex + 1}。",
             ct: ct).ConfigureAwait(false);
+    }
+
+    public Task<GcuWriteResult> SetFnLockAsync(bool locked, CancellationToken ct = default)
+    {
+        if (!Snapshot.IsFnLockFresh(_time.GetUtcNow()))
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "功能键锁定状态尚未读取或已过期。"));
+        string payload = JsonSerializer.Serialize(new { Action = locked ? "FNKEY_LOCK" : "FNKEY_UNLOCK" });
+        return ConfirmPeripheralAsync("Setting/Control", "Setting/Status", payload,
+            report => report.FnLocked == locked, "功能键锁定已回读确认。", ct);
+    }
+
+    public Task<GcuWriteResult> SetKeyboardPowerAsync(bool on, CancellationToken ct = default)
+    {
+        if (!Snapshot.IsKeyboardFresh(_time.GetUtcNow()) || Snapshot.Keyboard is not { SingleZone: true, Power: not null })
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "尚未读到支持的键盘开关状态。"));
+        return ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status",
+            JsonSerializer.Serialize(new { function = "SetPower", powerstatus = on ? 1 : 0 }),
+            report => report.Keyboard?.Power == on, "键盘灯开关已回读确认。", ct);
+    }
+
+    public Task<GcuWriteResult> SetKeyboardEffectAsync(string effect, int brightness, int colorIndex,
+        CancellationToken ct = default)
+    {
+        if (!Snapshot.IsKeyboardFresh(_time.GetUtcNow()) || Snapshot.Keyboard?.SingleZone != true)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "尚未读到支持的单区键盘状态。"));
+        if (effect is not ("Single" or "Rainbow") || brightness is < 0 or > 4 || colorIndex is < 1 or > 30)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "键盘灯效、亮度或颜色超出支持范围。"));
+        return ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status",
+            JsonSerializer.Serialize(GcuKeyboardProtocol.SingleZoneEffect(effect, brightness, colorIndex)),
+            report => report.Keyboard is { } keyboard && keyboard.Effect == effect &&
+                keyboard.Brightness == brightness && (effect != "Single" || keyboard.MonochromeIndex == colorIndex),
+            "键盘灯效已回读确认。", ct);
+    }
+
+    private async Task<GcuWriteResult> ConfirmPeripheralAsync(string controlTopic, string statusTopic,
+        string payload, Func<GcuSnapshot, bool> confirmed, string success, CancellationToken ct)
+    {
+        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
+            return new(GcuWriteStatus.Busy, "上一项操作尚未完成。");
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Observe(string topic, string message)
+        {
+            if (topic != statusTopic || !_transport.IsConnected || !Snapshot.IsConnected) return;
+            // Confirm only fields actually present in a new frame, never merged cached fields.
+            GcuSnapshot report = GcuMessageParser.Apply(new GcuSnapshot { IsConnected = true },
+                topic, message, _time.GetUtcNow(), out _);
+            if (confirmed(report)) received.TrySetResult();
+        }
+        try
+        {
+            if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
+                return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
+            using var linked = LinkedSession(ct);
+            await _transport.PublishAsync(controlTopic, payload, linked.Token).ConfigureAwait(false);
+            _transport.MessageReceived += Observe;
+            long started = _time.GetTimestamp();
+            while (_time.GetElapsedTime(started) < _confirmationTimeout)
+            {
+                await _transport.PublishAsync(controlTopic, GetStatus, linked.Token).ConfigureAwait(false);
+                TimeSpan remaining = _confirmationTimeout - _time.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.WhenAny(received.Task,
+                    Task.Delay(remaining < _pollInterval ? remaining : _pollInterval, _time, linked.Token)).ConfigureAwait(false);
+                linked.Token.ThrowIfCancellationRequested();
+                if (received.Task.IsCompleted) return new(GcuWriteStatus.Confirmed, success);
+            }
+            return new(GcuWriteStatus.TimedOut, "请求已发送，服务尚未回报完整的目标设置，请检查实际效果。");
+        }
+        catch (OperationCanceledException)
+        {
+            return new(ct.IsCancellationRequested ? GcuWriteStatus.Cancelled : GcuWriteStatus.Disconnected,
+                "操作已中断，设置是否生效尚未确认。");
+        }
+        catch
+        {
+            return new(GcuWriteStatus.Failed, "设置请求未完成，请检查厂商服务。");
+        }
+        finally
+        {
+            _transport.MessageReceived -= Observe;
+            _operation.Release();
+        }
     }
 
     public async Task<GcuWriteResult> SetFanBoostAsync(bool enabled, CancellationToken ct = default)
@@ -321,6 +403,7 @@ public sealed class GcuController : IAsyncDisposable
         ReadPlatformPower();
         await _transport.PublishAsync("Fan/Control", GetStatus, ct).ConfigureAwait(false);
         await _transport.PublishAsync("Setting/Control", GetStatus, ct).ConfigureAwait(false);
+        await _transport.PublishAsync("Keyboard/Ctrl", GetStatus, ct).ConfigureAwait(false);
     }
 
     private async Task<GcuWriteResult> ConfirmWriteAsync(

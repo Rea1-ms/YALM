@@ -8,6 +8,16 @@ using System.Text.RegularExpressions;
 
 namespace GHelper.Overlay
 {
+    public sealed record OverlayReadings
+    {
+        public double? CpuTemperature { get; init; }
+        public double? GpuTemperature { get; init; }
+        public int? CpuFanRpm { get; init; }
+        public int? GpuFanRpm { get; init; }
+        public int? CpuUsage { get; init; }
+        public int? GpuUsage { get; init; }
+    }
+
     public class HardwareOverlay : OSDNativeForm
     {
         // Foreground window — used to pin FPS measurement to the active process
@@ -199,7 +209,7 @@ namespace GHelper.Overlay
         private bool _showFps, _showTemp, _showFans, _showChart, _showPower, _showUsage, _showRam, _showBattery;
         private bool _onBattery;
         private int _overlayBattery = -1;
-        private static readonly bool _isAlly = AppConfig.IsAlly();
+        private readonly bool _isAlly;
         private bool _hidden;
         private int _shownPid;
         private bool _fgDesktop;
@@ -229,10 +239,28 @@ namespace GHelper.Overlay
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
 
-        public HardwareOverlay()
+        private readonly Form? _host;
+        private readonly Func<OverlayReadings>? _readings;
+
+        public HardwareOverlay(Form? host = null, Func<OverlayReadings>? readings = null)
         {
+            _host = host;
+            _readings = readings;
+            _isAlly = readings is null && AppConfig.IsAlly();
             Alpha = 255;
-            _timer.Elapsed += (_, _) => Tick();
+            _timer.Elapsed += (_, _) =>
+            {
+                if (_host is null) Tick();
+                else PostToHost(() => { if (_active) Tick(); });
+            };
+        }
+
+        private void PostToHost(Action action)
+        {
+            Form? host = _host ?? Program.settingsForm;
+            if (host is null || host.IsDisposed || !host.IsHandleCreated) return;
+            try { host.BeginInvoke(action); }
+            catch (InvalidOperationException) { }
         }
 
         private const int WM_NCDESTROY = 0x0082;
@@ -243,7 +271,7 @@ namespace GHelper.Overlay
             {
                 base.WndProc(ref m);
                 if (_active)
-                    Program.settingsForm?.BeginInvoke(() => { RestorePosition(); base.Show(); });
+                    PostToHost(() => { if (_active) { RestorePosition(); base.Show(); } });
                 return;
             }
 
@@ -434,6 +462,25 @@ namespace GHelper.Overlay
             {
                 if (!ownWindow) UpdateGameVisibility(fgPid);
                 if (_hidden) return;
+            }
+
+            if (_readings is not null)
+            {
+                OverlayReadings readings = _readings();
+                _cpuTempStr = "CPU:" + FmtTemp(readings.CpuTemperature ?? -1) + " ";
+                _gpuTempStr = "GPU:" + FmtTemp(readings.GpuTemperature ?? -1) + " ";
+                _cpuFanNum = FormatFan(readings.CpuFanRpm);
+                _gpuFanNum = FormatFan(readings.GpuFanRpm);
+                _cpuUsage = readings.CpuUsage;
+                _gpuUsage = readings.GpuUsage;
+                _onBattery = _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
+                float charge = SystemInformation.PowerStatus.BatteryLifePercent;
+                _batPercent = charge is >= 0 and <= 1 ? (int)Math.Round(charge * 100) : -1;
+                _batLevel = _batPercent >= 0 ? _batPercent + "%" : "--";
+                _batRate = "";
+                _batCharging = SystemInformation.PowerStatus.BatteryChargeStatus.HasFlag(BatteryChargeStatus.Charging);
+                Invalidate();
+                return;
             }
 
             HardwareControl.ReadSensorsOverlay();
@@ -1010,11 +1057,14 @@ namespace GHelper.Overlay
             _showNames = BlockShown("overlay_names", m);
             _overlayBattery = BatteryState(m);
             _showBattery = _overlayBattery != 0;
+            if (_readings is not null)
+                _showChart = _showPower = _showRam = _showNames = false;
         }
 
         // Don't pull sensors for blocks that aren't drawn (power feeds both the power and chart blocks).
         private void ApplySensorFlags()
         {
+            if (_readings is not null) return;
             HardwareControl.readFans   = _showFans;
             HardwareControl.readUsage  = _showUsage;
             HardwareControl.readMemory = _showRam;
@@ -1039,7 +1089,7 @@ namespace GHelper.Overlay
         private void OnDisplaySettingsChanged(object? sender, EventArgs e)
         {
             if (!_active) return;
-            Program.settingsForm?.BeginInvoke(() => { if (_active) RestorePosition(); });
+            PostToHost(() => { if (_active) RestorePosition(); });
         }
 
         private void RestorePosition()
@@ -1061,6 +1111,7 @@ namespace GHelper.Overlay
 
         public void StartOverlay()
         {
+            if (_active) return;
             _active = true;
             _lastFgPid = 0;
             _gameOnly = AppConfig.IsOverlayGameOnly();
@@ -1074,7 +1125,7 @@ namespace GHelper.Overlay
             _onBattery = _isAlly || _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
             ApplySensorFlags();
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-            HardwareControl.ResetCPUPowerCounter();
+            if (_readings is null) HardwareControl.ResetCPUPowerCounter();
 
             _fps?.Dispose();
             _fps = null;
@@ -1105,11 +1156,14 @@ namespace GHelper.Overlay
             _active = false;
             if (_fgHook != IntPtr.Zero) { UnhookWinEvent(_fgHook); _fgHook = IntPtr.Zero; }
             _fgHookProc = null;
-            HardwareControl.readUsage = false;
-            HardwareControl.readFans = false;
-            HardwareControl.readMemory = false;
-            HardwareControl.readPower = false;
-            HardwareControl.readBattery = false;
+            if (_readings is null)
+            {
+                HardwareControl.readUsage = false;
+                HardwareControl.readFans = false;
+                HardwareControl.readMemory = false;
+                HardwareControl.readPower = false;
+                HardwareControl.readBattery = false;
+            }
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _timer.Stop();
             _dragModeActive = false;
@@ -1138,6 +1192,13 @@ namespace GHelper.Overlay
         public void SuspendForDisplayOff()
         {
             if (_active) StopOverlay();
+        }
+
+        public override void Close()
+        {
+            StopOverlay();
+            _timer.Dispose();
+            base.Close();
         }
 
         public void ResumeForDisplayOn()
