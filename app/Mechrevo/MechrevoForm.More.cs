@@ -14,6 +14,12 @@ internal sealed partial class MechrevoForm
             Min = 0, Max = 4, Step = 1, Value = 0,
             Dock = DockStyle.Fill, Margin = Padding.Empty, TabStop = true
         };
+        private readonly RCheckBox _backlightPower = new()
+        {
+            Text = "开启", AutoSize = true, AutoCheck = false, ThreeState = true,
+            Anchor = AnchorStyles.Left, Margin = new Padding(8, 0, 12, 0),
+            AccessibleName = "键盘背光总开关"
+        };
         private readonly ToolTip _tips = new();
         private bool _brightnessDirty;
         private bool _rendering;
@@ -36,12 +42,16 @@ internal sealed partial class MechrevoForm
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             var backlight = Header("背光", GHelper.Properties.Resources.backlight);
-            backlight.ColumnCount = 2;
-            backlight.ColumnStyles[0].Width = 45;
-            backlight.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            backlight.ColumnCount = 3;
+            backlight.ColumnStyles[0].SizeType = SizeType.AutoSize;
+            backlight.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            backlight.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            backlight.Controls.Add(_backlightPower, 1, 0);
             _brightness.Height = (int)Math.Round(40F * DeviceDpi / 192F);
-            backlight.Controls.Add(_brightness, 1, 0);
+            backlight.Controls.Add(_brightness, 2, 0);
             AddRow(root, backlight);
+            _tips.SetToolTip(_backlightPower, "背光总开关，保留亮度、灯效和颜色配置");
+            _backlightPower.Click += async (_, _) => await ToggleBacklightPowerAsync();
             _tips.SetToolTip(_brightness, "背光亮度 0～4 档，松开后应用");
             _brightness.ValueChanged += (_, _) =>
             {
@@ -104,12 +114,26 @@ internal sealed partial class MechrevoForm
             if (IsDisposed) return;
             GcuSnapshot snapshot = _main.KeyboardSnapshot;
             bool available = snapshot.IsKeyboardFresh() && snapshot.Keyboard is { SingleZone: true, Brightness: not null };
+            bool powerAvailable = snapshot.IsKeyboardFresh() && snapshot.Keyboard is { SingleZone: true, Power: not null };
+            bool idle = !_main._keyboardBusy && !_main._connecting && !_main._switching && !_main._startupTest;
             _rendering = true;
             if (!_brightnessDirty && !_main._keyboardBusy) _brightness.Value = snapshot.Keyboard?.Brightness ?? 0;
+            _backlightPower.CheckState = !powerAvailable ? CheckState.Indeterminate
+                : snapshot.Keyboard!.Power == true ? CheckState.Checked : CheckState.Unchecked;
+            _backlightPower.Text = !powerAvailable ? "未收到" : snapshot.Keyboard!.Power == true ? "开启" : "关闭";
             _rendering = false;
+            _backlightPower.AccessibleName = $"键盘背光总开关：{_backlightPower.Text}";
+            _backlightPower.Enabled = powerAvailable && idle && !_main._demo;
             _brightness.AccessibleName = available ? $"背光亮度：{_brightness.Value} / 4" : "背光亮度：未收到";
-            _brightness.Enabled = available && !_main._keyboardBusy && !_main._connecting && !_main._switching && !_main._startupTest;
+            _brightness.Enabled = available && idle && snapshot.Keyboard?.Power != false;
             if (!available) _brightnessDirty = false;
+        }
+
+        private async Task ToggleBacklightPowerAsync()
+        {
+            if (!_backlightPower.Enabled || _main._demo || _main._keyboardBusy ||
+                _main._controller is not { } controller || _main.KeyboardSnapshot.Keyboard?.Power is not bool on) return;
+            await _main.RunKeyboardAsync(() => controller.SetKeyboardPowerAsync(!on, _main._lifetime.Token));
         }
 
         private async Task ApplyBrightnessAsync()

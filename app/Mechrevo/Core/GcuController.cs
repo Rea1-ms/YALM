@@ -162,7 +162,8 @@ public sealed class GcuController : IAsyncDisposable
             return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "尚未读到支持的键盘开关状态。"));
         return ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status",
             JsonSerializer.Serialize(new { function = "SetPower", powerstatus = on ? 1 : 0 }),
-            report => report.Keyboard?.Power == on, "键盘灯开关已回读确认。", ct);
+            report => report.Keyboard is { SingleZone: true } keyboard && keyboard.Power == on,
+            "键盘灯开关已回读确认。", ct);
     }
 
     public Task<GcuWriteResult> RefreshKeyboardAsync(CancellationToken ct = default) =>

@@ -257,17 +257,55 @@ internal static partial class Program
     {
         await using var fake = new FakeTransport();
         await using var controller = await Connected(fake);
-        SeedKeyboard(fake);
-        fake.Published.Clear();
-        fake.OnPublish = (transport, topic, payload) =>
+        string original = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "keyboard-manual-status.json"));
+        fake.Emit("Keyboard/Status", original);
+        foreach (bool on in new[] { false, true })
         {
-            if (payload.Contains("GETSTATUS"))
-                transport.Emit("Keyboard/Status", "{\"type\":\"SingleZone\",\"powerStatus\":\"Off\",\"powerstatus\":1}");
-            return Task.CompletedTask;
-        };
-        Assert.True((await controller.SetKeyboardPowerAsync(false)).Confirmed, "case-sensitive powerStatus confirms");
-        using var command = JsonDocument.Parse(fake.Published[0].Payload);
-        Assert.Equal(0, command.RootElement.GetProperty("powerstatus").GetInt32(), "SetPower uses lowercase numeric field");
+            fake.Published.Clear();
+            var reply = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+            reply["powerStatus"] = on ? "On" : "Off";
+            reply["powerstatus"] = on ? 0 : 1;
+            fake.OnPublish = (transport, topic, payload) =>
+            {
+                if (payload.Contains("GETSTATUS")) transport.Emit("Keyboard/Status", reply.ToJsonString());
+                return Task.CompletedTask;
+            };
+            Assert.True((await controller.SetKeyboardPowerAsync(on)).Confirmed, "case-sensitive powerStatus confirms");
+            using var command = JsonDocument.Parse(fake.Published[0].Payload);
+            Assert.Equal("SetPower", command.RootElement.GetProperty("function").GetString(), "dedicated power command");
+            Assert.Equal(on ? 1 : 0, command.RootElement.GetProperty("powerstatus").GetInt32(), "SetPower uses lowercase numeric field");
+            Assert.Equal(2, command.RootElement.EnumerateObject().Count(), "power must not send brightness, effect or colors");
+            Assert.Equal(1, fake.Published.Count(item => item.Payload.Contains("SetPower")), "power writes are never retried");
+            Assert.Equal(4, controller.Snapshot.Keyboard!.Brightness!.Value, "power preserves stored brightness");
+            Assert.Equal(4, controller.Snapshot.Keyboard.ManualInterval!.Value, "power preserves the interval");
+            Assert.True(controller.Snapshot.Keyboard.ManualIndices!.SequenceEqual(new[] { 1, 5, 9, 13, 21, 25 }),
+                "power preserves all six ordered colors");
+            Assert.Null(controller.Snapshot.Keyboard.Effect, "power does not invent an unreported effect");
+        }
+    }
+
+    private static async Task KeyboardPowerNeedsFreshReadback()
+    {
+        foreach (string? reply in new string?[]
+        {
+            null,
+            "{\"type\":\"SingleZone\",\"powerstatus\":0}",
+            "{\"type\":\"SingleZone\",\"powerStatus\":\"On\"}",
+            "{\"type\":\"Unknown\",\"powerStatus\":\"Off\"}",
+            "{\"powerStatus\":\"Off\"}"
+        })
+        {
+            await using var fake = new FakeTransport();
+            await using var controller = await Connected(fake, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(2));
+            fake.Emit("Keyboard/Status", "{\"type\":\"SingleZone\",\"powerStatus\":\"Off\"}");
+            fake.OnPublish = (transport, topic, payload) =>
+            {
+                if (reply is not null && payload.Contains("GETSTATUS")) transport.Emit("Keyboard/Status", reply);
+                return Task.CompletedTask;
+            };
+            Assert.Equal(GcuWriteStatus.TimedOut, (await controller.SetKeyboardPowerAsync(false)).Status,
+                "old power, a different case, a wrong target and unknown keyboard frames cannot confirm");
+        }
     }
 
     private static async Task KeyboardBrightnessPreservesManualEffect()

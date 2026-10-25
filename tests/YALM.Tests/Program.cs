@@ -33,6 +33,7 @@ internal static partial class Program
             ("missing keyboard effect readback never claims success", MissingKeyboardEffectCannotConfirm),
             ("unsupported keyboard and invalid settings publish nothing", UnsupportedKeyboardRejectsWrites),
             ("keyboard power uses fresh case-sensitive readback", KeyboardPowerConfirms),
+            ("keyboard power needs fresh matching single-zone state", KeyboardPowerNeedsFreshReadback),
             ("brightness-only writes preserve unknown six-color effect", KeyboardBrightnessPreservesManualEffect),
             ("brightness requires its own fresh matching readback", KeyboardBrightnessNeedsFreshReadback),
             ("brightness rejects unsupported or incomplete state", KeyboardBrightnessRejectsUnavailableState),
