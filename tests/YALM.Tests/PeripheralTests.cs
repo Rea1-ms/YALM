@@ -25,6 +25,82 @@ internal static partial class Program
         return Task.CompletedTask;
     }
 
+    private static string ReadProfile2CurveFixture() => File.ReadAllText(
+        Path.Combine(AppContext.BaseDirectory, "Fixtures", "profile2-fan-table.json"));
+
+    private static Task Profile2CurveUsesActualSlots()
+    {
+        var snapshot = GcuMessageParser.Apply(new() { IsConnected = true }, "Fan/Table",
+            ReadProfile2CurveFixture(), DateTimeOffset.UtcNow, out _);
+        Assert.Equal("M4T2", snapshot.FanTable!.Name, "real profile 2 table");
+        foreach (FanCurveTarget target in Enum.GetValues<FanCurveTarget>())
+        {
+            var curve = snapshot.FanTable.Curve(target);
+            Assert.True(FanCurveDraft.CanEdit(curve), "profile 2 must not be rejected for having ten effective slots");
+            int count = FanCurveDraft.EditablePointCount(curve);
+            Assert.Equal(10, count, "profile 2 has ten effective slots including the stop slot");
+            Assert.False(curve[9].IsTail, "last rising point must survive its falling terminator");
+            Assert.True(curve.Skip(count).All(point => point.IsTail), "profile 2 has six tail slots");
+            Assert.True(FanCurveDraft.TryBuild(curve.Take(count).Select(point => point.Duty).ToArray(),
+                out int[] duties, out string error), error);
+            Assert.True(duties.SequenceEqual(curve.Select(point => point.Duty)), "all sixteen original duties must round trip");
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task CurveSlotValidationRejectsIncompleteTails()
+    {
+        var snapshot = GcuMessageParser.Apply(new(), "Fan/Table", ReadProfile2CurveFixture(),
+            DateTimeOffset.UtcNow, out _);
+        var curve = snapshot.FanTable!.Cpu.ToArray();
+        Assert.False(FanCurveDraft.CanEdit(curve.Take(10).ToArray()), "short wire tables are incomplete");
+        curve[10] = curve[10] with { DownTemperature = 90 };
+        Assert.False(FanCurveDraft.CanEdit(curve), "an unused rising threshold with a live falling threshold is not a complete tail");
+        curve = snapshot.FanTable.Cpu.ToArray();
+        curve[2] = curve[2] with { UpTemperature = 255, DownTemperature = 255 };
+        Assert.False(FanCurveDraft.CanEdit(curve), "a tail followed by active slots must be rejected");
+        return Task.CompletedTask;
+    }
+
+    private static async Task Profile2CurveValidatesAndConfirms()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        SeedCustomState(fake, profile: 1);
+        string original = ReadProfile2CurveFixture();
+        fake.Emit("Fan/Table", original);
+        foreach (FanCurveTarget target in Enum.GetValues<FanCurveTarget>())
+        {
+            fake.Emit("Fan/Table", original);
+            var curve = controller.Snapshot.FanTable!.Curve(target);
+            int count = FanCurveDraft.EditablePointCount(curve);
+            int[] editable = curve.Take(count).Select(point => point.Duty).ToArray();
+            editable[^1] = 86;
+            Assert.True(FanCurveDraft.TryBuild(editable, out int[] duties, out string error), error);
+            int[] badTail = duties.ToArray();
+            badTail[10] = 87;
+            for (int i = 11; i < 16; i++) badTail[i] = 87;
+            fake.Published.Clear();
+            Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetFanCurveAsync(target, badTail)).Status,
+                "the first of six tail slots must follow slot nine rather than slot ten");
+            Assert.Equal(0, fake.Published.Count, "invalid profile 2 tail must publish nothing");
+            var reply = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+            var nodes = reply[target == FanCurveTarget.Cpu ? "CPU" : "GPU"]!.AsArray();
+            for (int i = 0; i < 16; i++) nodes[i]!["Duty"] = duties[i];
+            fake.OnPublish = (transport, topic, payload) =>
+            {
+                if (topic == "Fan/Control" && payload.Contains("GET_FAN_SPEED_CURVE_SETTING", StringComparison.Ordinal))
+                    transport.Emit("Fan/Table", reply.ToJsonString());
+                return Task.CompletedTask;
+            };
+            Assert.True((await controller.SetFanCurveAsync(target, duties)).Confirmed, "profile 2 must confirm exact fresh readback");
+            using var command = JsonDocument.Parse(fake.Published[0].Payload);
+            Assert.Equal("86", command.RootElement.GetProperty("T9").GetString(), "last active slot must keep its original index");
+            Assert.Equal("86", command.RootElement.GetProperty("T10").GetString(), "first tail value must follow the last active slot");
+            Assert.Equal("86", command.RootElement.GetProperty("T15").GetString(), "all sixteen slots must be sent");
+        }
+    }
+
     private static Task RealKeyboardStatusParses()
     {
         using var fixture = ReadRealServiceFixture();
@@ -57,13 +133,19 @@ internal static partial class Program
         {
             var curve = snapshot.FanTable!.Curve(target);
             Assert.Equal(0, curve[0].UpTemperature, "firmware sentinel must remain unchanged");
-            Assert.Equal(48, curve[0].PlotTemperature, "fixed stop point is drawn at its real threshold");
-            Assert.True(curve.Take(11).All(point => point.PlotTemperature is >= 20 and <= 110),
-                "off-plot sentinel must not create a diagonal line through the plot");
-            Assert.True(curve.Skip(1).Take(10).All(point => point.PlotTemperature == point.UpTemperature),
-                "effective rising thresholds must be preserved, including coincident GPU points");
-            Assert.Equal(255, curve[15].PlotTemperature, "tail sentinel is not an editable display point");
+            Assert.True(curve[0].IsStopThreshold, "stop threshold is separate from the rising curve");
+            Assert.Equal(48, curve[0].DownTemperature, "fixed stop threshold must remain unchanged");
+            Assert.True(curve.Skip(1).Take(10).All(point => !point.IsStopThreshold && point.UpTemperature is >= 20 and <= 110),
+                "all effective rising nodes must remain visible, including zero duty");
+            Assert.False(curve[15].IsStopThreshold, "tail sentinel is not a stop threshold");
         }
+        var gpu = snapshot.FanTable!.Gpu;
+        Assert.Equal(56, gpu[1].UpTemperature, "zero-duty rising threshold");
+        Assert.Equal(56, gpu[2].UpTemperature, "coincident nonzero rising threshold");
+        Assert.True(FanCurveDraft.TryBuild(gpu.Take(11).Select(p => p.Duty).ToArray(), out int[] duties, out _),
+            "display separation must retain the full wire draft");
+        Assert.Equal(0, duties[1], "zero-duty node must not be dropped from writes");
+        Assert.Equal(30, duties[2], "nonzero node must retain its original slot");
         return Task.CompletedTask;
     }
 

@@ -46,14 +46,14 @@ internal sealed class FanCurveEditor : UserControl
         Margin = new Padding(0, 6, 0, 6);
         AccessibleName = title;
         var area = new ChartArea("Curve");
-        area.AxisX.Minimum = 20;
-        area.AxisX.Maximum = 110;
-        area.AxisX.Interval = 10;
+        area.AxisX.Minimum = 45;
+        area.AxisX.Maximum = 100;
+        area.AxisX.Interval = 5;
         area.AxisY.Minimum = 0;
         area.AxisY.Maximum = 100;
         area.AxisY.Interval = 10;
         for (int i = 0; i <= 100; i += 10)
-            area.AxisY.CustomLabels.Add(i - 2, i + 2, i == 0 ? "关闭" : $"{i}%");
+            area.AxisY.CustomLabels.Add(i - 2, i + 2, $"{i}%");
         area.AxisX.IsMarginVisible = false;
         area.AxisX.LabelStyle.Font = area.AxisY.LabelStyle.Font = new Font("Arial", 7F);
         area.AxisX.IsLabelAutoFit = area.AxisY.IsLabelAutoFit = false;
@@ -101,7 +101,8 @@ internal sealed class FanCurveEditor : UserControl
 
     public void SetCurve(IReadOnlyList<FanCurvePoint>? curve, string identity, bool discardDraft)
     {
-        if (!FanCurveDraft.CanEdit(curve))
+        int pointCount = FanCurveDraft.EditablePointCount(curve);
+        if (pointCount == 0)
         {
             _points = [];
             _duties = _baseline = [];
@@ -110,15 +111,15 @@ internal sealed class FanCurveEditor : UserControl
             return;
         }
         bool sameShape = _points.Select(p => (p.Id, p.UpTemperature, p.DownTemperature))
-            .SequenceEqual(curve!.Take(11).Select(p => (p.Id, p.UpTemperature, p.DownTemperature)));
+            .SequenceEqual(curve!.Take(pointCount).Select(p => (p.Id, p.UpTemperature, p.DownTemperature)));
         if (!discardDraft && identity == _identity && sameShape &&
-            _baseline.SequenceEqual(curve.Take(11).Select(point => point.Duty))) return;
+            _baseline.SequenceEqual(curve.Take(pointCount).Select(point => point.Duty))) return;
         bool preserve = !discardDraft && HasChanges && identity == _identity && sameShape;
-        _points = curve.Take(11).ToArray();
+        _points = curve.Take(pointCount).ToArray();
         _baseline = _points.Select(point => point.Duty).ToArray();
         if (!preserve) _duties = (int[])_baseline.Clone();
         _identity = identity;
-        _selected = Math.Clamp(_selected, 0, _points.Count - 1);
+        _selected = Math.Clamp(_selected, FirstRisingIndex, _points.Count - 1);
         Redraw();
     }
 
@@ -131,19 +132,27 @@ internal sealed class FanCurveEditor : UserControl
         for (int i = 0; i < _points.Count; i++)
         {
             FanCurvePoint point = _points[i];
-            int index = _rising.Points.AddXY(point.PlotTemperature, _duties[i]);
+            if (!point.IsStopThreshold)
+            {
+                int index = _rising.Points.AddXY(point.UpTemperature, _duties[i]);
+                _rising.Points[index].Tag = i;
+                _rising.Points[index].ToolTip = PointTemperatures(point) + $"：{_duties[i]}%";
+                if (i + 1 < _points.Count && point.UpTemperature == _points[i + 1].UpTemperature)
+                    _rising.Points[index].ToolTip += $"\n同温度跳变：{_duties[i]}% → {_duties[i + 1]}%";
+                else if (i > 0 && point.UpTemperature == _points[i - 1].UpTemperature)
+                    _rising.Points[index].ToolTip += $"\n同温度跳变：{_duties[i - 1]}% → {_duties[i]}%";
+            }
             if (point.DownTemperature < 255)
             {
                 int fallingIndex = _falling.Points.AddXY(point.DownTemperature, _duties[i]);
-                _falling.Points[fallingIndex].ToolTip = $"降温 {point.DownTemperature} ℃：{_duties[i]}%";
+                _falling.Points[fallingIndex].ToolTip = point.IsStopThreshold
+                    ? $"停转 {point.DownTemperature} ℃（固定）" : $"降温 {point.DownTemperature} ℃：{_duties[i]}%";
+                if (point.IsStopThreshold)
+                {
+                    _falling.Points[fallingIndex].MarkerStyle = MarkerStyle.Circle;
+                    _falling.Points[fallingIndex].MarkerSize = 10;
+                }
             }
-            _rising.Points[index].ToolTip = PointTemperatures(point) + $"：{_duties[i]}%";
-        }
-        if (_points.Count > 0)
-        {
-            Axis axis = _chart.ChartAreas[0].AxisX;
-            axis.Minimum = Math.Min(20, Math.Floor(_points.Min(p => p.PlotTemperature) / 10d) * 10);
-            axis.Maximum = Math.Max(110, Math.Ceiling(_points.Max(p => p.PlotTemperature) / 10d) * 10 + 10);
         }
         UpdateSelection();
         _chart.Invalidate();
@@ -162,7 +171,7 @@ internal sealed class FanCurveEditor : UserControl
             try
             {
                 ChartArea area = _chart.ChartAreas[0];
-                int x = (int)area.AxisX.ValueToPixelPosition(point.PlotTemperature);
+                int x = (int)area.AxisX.ValueToPixelPosition(point.UpTemperature);
                 int y = (int)area.AxisY.ValueToPixelPosition(_duties[_selected]);
                 _point.Location = new Point(Math.Clamp(x - _point.PreferredWidth / 2, 0, Math.Max(0, _chart.Width - _point.PreferredWidth)),
                     Math.Max(0, y - _point.PreferredHeight - 10));
@@ -174,7 +183,9 @@ internal sealed class FanCurveEditor : UserControl
         }
     }
 
-    private static string PointTemperatures(FanCurvePoint point) => point.UpTemperature == 0 && point.Duty == 0
+    private int FirstRisingIndex => _points.Count > 0 && _points[0].IsStopThreshold ? 1 : 0;
+
+    private static string PointTemperatures(FanCurvePoint point) => point.IsStopThreshold
         ? $"停转 {point.DownTemperature} ℃"
         : $"升温 {point.UpTemperature} ℃ / 降温 " +
           (point.DownTemperature == 255 ? "结束" : $"{point.DownTemperature} ℃");
@@ -197,7 +208,7 @@ internal sealed class FanCurveEditor : UserControl
         if (e.Button != MouseButtons.Left) return;
         HitTestResult hit = _chart.HitTest(e.X, e.Y);
         if (hit.ChartElementType != ChartElementType.DataPoint || hit.Series != _rising) return;
-        _selected = hit.PointIndex;
+        _selected = (int)_rising.Points[hit.PointIndex].Tag;
         _chart.Focus();
         UpdateSelection();
         if (_editable && _selected > 0)
@@ -220,7 +231,7 @@ internal sealed class FanCurveEditor : UserControl
         if (_points.Count == 0) return;
         if (e.KeyCode is Keys.Left or Keys.Right)
         {
-            _selected = Math.Clamp(_selected + (e.KeyCode == Keys.Left ? -1 : 1), 0, _points.Count - 1);
+            _selected = Math.Clamp(_selected + (e.KeyCode == Keys.Left ? -1 : 1), FirstRisingIndex, _points.Count - 1);
             UpdateSelection();
         }
         else if (e.KeyCode is Keys.Up or Keys.Down)

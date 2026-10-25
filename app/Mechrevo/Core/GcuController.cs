@@ -283,12 +283,6 @@ public sealed class GcuController : IAsyncDisposable
             if (duties[i] < duties[i - 1])
                 return new(GcuWriteStatus.Rejected, "风扇曲线占空比不能随温度下降。");
         }
-        for (int i = 11; i < 16; i++)
-        {
-            if (duties[i] != duties[10])
-                return new(GcuWriteStatus.Rejected, "风扇曲线最后 5 个尾值必须与第 11 个有效点相同。");
-        }
-
         GcuSnapshot before = Snapshot;
         if (before.Mode != 3)
             return new(GcuWriteStatus.Rejected, "风扇曲线只能在自定义模式中应用。");
@@ -297,6 +291,15 @@ public sealed class GcuController : IAsyncDisposable
             string.IsNullOrWhiteSpace(table.Name) ||
             table.Curve(target).Count != 16)
             return new(GcuWriteStatus.Rejected, "当前风扇表尚未读取或已经过期。");
+
+        int pointCount = FanCurveDraft.EditablePointCount(table.Curve(target));
+        if (pointCount == 0)
+            return new(GcuWriteStatus.Rejected, "当前风扇表的有效温度槽结构不完整。");
+        for (int i = pointCount; i < duties.Count; i++)
+        {
+            if (duties[i] != duties[pointCount - 1])
+                return new(GcuWriteStatus.Rejected, "风扇曲线尾值必须与最后一个有效点相同。");
+        }
 
         var payload = new Dictionary<string, object>
         {

@@ -131,6 +131,7 @@ internal sealed partial class CustomModeForm
         var falling = new RCheckBox { Text = "显示降温阈值", AutoSize = true, Margin = new Padding(4, 8, 4, 4) };
         falling.CheckedChanged += (_, _) => _cpuCurve.ShowFallingThresholds = _gpuCurve.ShowFallingThresholds = falling.Checked;
         AddRow(layout, falling);
+        AddRow(layout, InfoLabel("停转阈值只在降温视图显示。同温度的两个节点表示转速跳变。"));
         AddRow(layout, InfoLabel("温度点由固件固定；拖动节点调整百分比，悬停查看温度。左右键选点，上下键微调，按住上档键每次调整 5%。应用后才写入。"));
         return ScrollPage(layout);
     }
@@ -227,7 +228,11 @@ internal sealed partial class CustomModeForm
         int[] down = [48, 50, 64, 67, 70, 73, 76, 79, 82, 85, 255];
         var cpu = Enumerable.Range(0, 16).Select(i => new FanCurvePoint(i,
             i > 10 ? 255 : up[i], i > 10 ? 255 : down[i], i == 0 ? 0 : Math.Min(i, 10) * 10)).ToArray();
-        var gpu = cpu.Select(p => p with { Duty = p.Id == 0 ? 0 : Math.Min(100, p.Duty + 5) }).ToArray();
+        int[] gpuUp = [0, 56, 56, 58, 61, 64, 67, 70, 73, 75, 78];
+        int[] gpuDown = [48, 48, 59, 62, 65, 68, 71, 74, 76, 79, 255];
+        int[] gpuDuty = [0, 0, 30, 35, 45, 55, 60, 70, 80, 90, 95];
+        var gpu = Enumerable.Range(0, 16).Select(i => new FanCurvePoint(i,
+            i > 10 ? 255 : gpuUp[i], i > 10 ? 255 : gpuDown[i], gpuDuty[Math.Min(i, 10)])).ToArray();
         return new GcuSnapshot
         {
             IsConnected = true, Mode = 3, ModeUpdatedAt = now,

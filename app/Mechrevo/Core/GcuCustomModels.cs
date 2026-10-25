@@ -43,26 +43,29 @@ public sealed record FanCurvePoint(
     // terminator. Only two terminators identify an unused tail slot.
     public bool IsTail => UpTemperature == 255 && DownTemperature == 255;
 
-    // Slot zero has no rising threshold. Plot its actual fan-stop threshold,
-    // keeping the protocol's zero sentinel out of line interpolation.
-    public int PlotTemperature => UpTemperature == 0 && Duty == 0 && DownTemperature < 255
-        ? DownTemperature : UpTemperature;
+    // Slot zero describes stopping on cooldown, not a point on the rising curve.
+    public bool IsStopThreshold => Id == 0 && UpTemperature == 0 && Duty == 0 && DownTemperature < 255;
 }
 
 public static class FanCurveDraft
 {
-    public static bool CanEdit(IReadOnlyList<FanCurvePoint>? curve) =>
-        curve is { Count: 16 } && curve.Take(11).All(point => point.UpTemperature < 255) &&
-        curve.Skip(11).All(point => point.IsTail);
+    public static int EditablePointCount(IReadOnlyList<FanCurvePoint>? curve)
+    {
+        if (curve is not { Count: 16 }) return 0;
+        int count = curve.TakeWhile(point => point.UpTemperature is >= 0 and < 255).Count();
+        return count >= 2 && curve.Skip(count).All(point => point.IsTail) ? count : 0;
+    }
+
+    public static bool CanEdit(IReadOnlyList<FanCurvePoint>? curve) => EditablePointCount(curve) > 0;
 
     public static bool TryBuild(IReadOnlyList<int> editableDuties, out int[] duties, out string error)
     {
         ArgumentNullException.ThrowIfNull(editableDuties);
         duties = new int[16];
         error = "";
-        if (editableDuties.Count != 11)
+        if (editableDuties.Count is < 2 or > 16)
         {
-            error = "风扇曲线必须包含 11 个可编辑温度点。";
+            error = "风扇曲线必须包含 2～16 个有效温度点。";
             return false;
         }
 
@@ -87,7 +90,7 @@ public static class FanCurveDraft
         }
 
         for (int index = 0; index < duties.Length; index++)
-            duties[index] = editableDuties[Math.Min(index, 10)];
+            duties[index] = editableDuties[Math.Min(index, editableDuties.Count - 1)];
         return true;
     }
 }

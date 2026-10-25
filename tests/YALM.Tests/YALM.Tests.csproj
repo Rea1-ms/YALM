@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="Fixtures\real-service-status.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\profile2-fan-table.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="Program.cs" />
     <Compile Include="PeripheralTests.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuKeyboardModels.cs" Link="Core\GcuKeyboardModels.cs" />
