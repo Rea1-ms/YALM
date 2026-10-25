@@ -56,6 +56,8 @@ internal sealed partial class MechrevoForm : RForm
         ClientSize = new Size(500, 440);
         MinimumSize = new Size(500, 440);
         StartPosition = FormStartPosition.Manual;
+        MaximizeBox = false;
+        MinimizeBox = false;
         Padding = new Padding(18);
         AutoScroll = true;
 

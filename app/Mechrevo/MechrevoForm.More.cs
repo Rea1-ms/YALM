@@ -10,10 +10,8 @@ internal sealed partial class MechrevoForm
     {
         private readonly MechrevoForm _main;
         private readonly KeyboardSettingsPanel _keyboard;
-        private readonly CheckBox _fn = new() { Text = "功能键锁定", AutoSize = true, Margin = new Padding(4, 8, 4, 8) };
         private readonly RButton _connectionToggle = MoreButton("展开");
         private readonly Panel _scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
-        private bool _rendering;
 
         public MoreSettingsForm(MechrevoForm main)
         {
@@ -25,6 +23,8 @@ internal sealed partial class MechrevoForm
             ClientSize = new Size(500, 610);
             MinimumSize = new Size(460, 430);
             StartPosition = FormStartPosition.Manual;
+            MaximizeBox = false;
+            MinimizeBox = false;
             Padding = new Padding(12);
 
             var root = new TableLayoutPanel
@@ -33,15 +33,6 @@ internal sealed partial class MechrevoForm
                 Margin = Padding.Empty
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            AddRow(root, Header("功能键", GHelper.Properties.Resources.icons8_keyboard_32));
-            AddRow(root, _fn);
-            _fn.CheckedChanged += async (_, _) =>
-            {
-                if (_rendering || _main._controller is not { } current) return;
-                bool locked = _fn.Checked;
-                await _main.RunKeyboardAsync(() => current.SetFnLockAsync(locked, _main._lifetime.Token));
-            };
-
             AddRow(root, Header("背光", GHelper.Properties.Resources.icons8_brightness_32));
             _keyboard = new KeyboardSettingsPanel(() => _main._controller, main._demo);
             AddRow(root, _keyboard);
@@ -59,6 +50,7 @@ internal sealed partial class MechrevoForm
             };
             AddRow(root, topmost);
             var overlay = MoreButton("屏幕叠加设置");
+            MechrevoUi.SizeCompactButtons(this, _connectionToggle, overlay);
             overlay.Width = 150;
             overlay.Dock = DockStyle.None;
             overlay.Anchor = AnchorStyles.Left;
@@ -94,13 +86,6 @@ internal sealed partial class MechrevoForm
         public void RefreshState()
         {
             if (IsDisposed) return;
-            GcuSnapshot snapshot = _main.KeyboardSnapshot;
-            _rendering = true;
-            _fn.CheckState = !snapshot.IsFnLockFresh() ? CheckState.Indeterminate
-                : snapshot.FnLocked == true ? CheckState.Checked : CheckState.Unchecked;
-            _fn.Enabled = !_main._demo && !_main._startupTest && !_main._keyboardBusy &&
-                !_main._connecting && !_main._switching && snapshot.IsFnLockFresh();
-            _rendering = false;
             _keyboard.RefreshState();
         }
 
@@ -148,7 +133,7 @@ internal sealed partial class MechrevoForm
 
         private static RButton MoreButton(string text) => new()
         {
-            Text = text, Height = 26, Dock = DockStyle.Top, Margin = new Padding(2),
+            Text = text, Dock = DockStyle.Top, Margin = new Padding(2),
             BorderColor = Color.Transparent, BorderRadius = 2, Secondary = true
         };
     }

@@ -55,6 +55,8 @@ internal sealed partial class CustomModeForm : RForm
         ClientSize = new Size(850, 710);
         MinimumSize = new Size(820, 650);
         StartPosition = FormStartPosition.CenterParent;
+        MaximizeBox = false;
+        MinimizeBox = false;
         Padding = new Padding(10);
 
         BuildLayout();

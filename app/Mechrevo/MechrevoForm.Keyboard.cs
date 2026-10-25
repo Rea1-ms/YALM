@@ -61,7 +61,7 @@ internal sealed partial class MechrevoForm
         _keyboardEffect.Items.AddRange(["恒亮（静态）", "彩虹"]);
         _keyboardEffect.PlaceholderText = "选择灯效";
         _keyboardEffect.AccessibleName = "笔记本键盘灯效";
-        _keyboardEffect.Margin = new Padding(3, 3, 3, 2);
+        _keyboardEffect.Dock = DockStyle.Top;
         _keyboardEffect.SelectionChangeCommitted += async (_, _) =>
         {
             if (_updatingKeyboard || _keyboardEffect.SelectedIndex < 0 || _controller is null) return;
@@ -70,8 +70,6 @@ internal sealed partial class MechrevoForm
             string effect = _keyboardEffect.SelectedIndex == 0 ? "Single" : "Rainbow";
             await RunKeyboardAsync(() => _controller.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
         };
-        _keyboardColor.Height = _keyboardMore.Height = 24;
-        _keyboardColor.Margin = _keyboardMore.Margin = new Padding(2);
         _keyboardColor.Dock = _keyboardMore.Dock = DockStyle.Top;
         _keyboardColor.Click += (_, _) => OpenMoreSettings(selectColor: true);
         _keyboardMore.Image = GHelper.Properties.Resources.icons8_settings_32;
@@ -86,10 +84,26 @@ internal sealed partial class MechrevoForm
         row.Controls.Add(_keyboardEffect, 0, 0);
         row.Controls.Add(_keyboardColor, 1, 0);
         row.Controls.Add(_keyboardMore, 2, 0);
+        // RComboBox calibrates its native height after its handle is created.
+        // Match the buttons' painted edges, including RButton's parent-color pen.
+        row.Layout += (_, _) => AlignKeyboardRow();
+        _keyboardEffect.SizeChanged += (_, _) => AlignKeyboardRow();
+        AlignKeyboardRow();
         AddRow(layout, row);
         _keyboardStatus.ForeColor = SystemColors.GrayText;
         _keyboardStatus.Margin = new Padding(2, 2, 2, 16);
         AddRow(layout, _keyboardStatus);
+    }
+
+    private void AlignKeyboardRow()
+    {
+        // Same border width and inset as upstream RButton.OnPaint.
+        float ratio = DeviceDpi / 192F;
+        int border = (int)Math.Round((ratio * 5 - 1) / 2) * 2 + 1;
+        int inset = border / 2 + 1;
+        _keyboardEffect.Margin = new Padding(3, inset + 1, 3, inset + 1);
+        _keyboardColor.Margin = _keyboardMore.Margin = new Padding(2, 1, 2, 1);
+        _keyboardColor.Height = _keyboardMore.Height = _keyboardEffect.Height + border;
     }
 
     private GcuSnapshot KeyboardSnapshot => _demo ? new GcuSnapshot

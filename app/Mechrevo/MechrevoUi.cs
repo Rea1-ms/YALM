@@ -2,6 +2,14 @@ namespace YALM.Mechrevo;
 
 internal static class MechrevoUi
 {
+    // Upstream buttons are 48 px high at its 192-DPI design baseline.
+    // Programmatic forms use the current DPI, so convert that size once.
+    public static void SizeCompactButtons(Control owner, params GHelper.UI.RButton[] buttons)
+    {
+        int height = (int)Math.Round(48F * owner.DeviceDpi / 192F);
+        foreach (var button in buttons) button.Height = height;
+    }
+
     // Upstream section icons are 32 px at the 192-DPI design baseline.
     public static Control Heading(Control owner, Label title, Image icon)
     {

@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
@@ -9,6 +9,7 @@ namespace GHelper.UI
         private const int TextLeftPad = 1;
         public bool UseCustomTextPadding = true;
         public string PlaceholderText { get; set; } = string.Empty;
+        private bool _darkTheme;
 
         public RComboBox()
         {
@@ -28,6 +29,24 @@ namespace GHelper.UI
         {
             base.OnHandleCreated(e);
             CalibrateItemHeight();
+            ApplyNativeTheme();
+        }
+
+        public void ApplyTheme(bool dark)
+        {
+            _darkTheme = dark;
+            if (IsHandleCreated) ApplyNativeTheme();
+            Invalidate();
+        }
+
+        private void ApplyNativeTheme()
+        {
+            // The native combo also paints during focus and dropdown transitions,
+            // outside WM_PAINT. Keep those frames and the popup in the same theme.
+            SetWindowTheme(Handle, _darkTheme ? "DarkMode_CFD" : "Explorer", null);
+            var info = new COMBOBOXINFO { cbSize = Marshal.SizeOf<COMBOBOXINFO>() };
+            if (GetComboBoxInfo(Handle, ref info) && info.hwndList != nint.Zero)
+                SetWindowTheme(info.hwndList, _darkTheme ? "DarkMode_Explorer" : "Explorer", null);
         }
 
         protected override void OnDpiChangedAfterParent(EventArgs e)
@@ -41,7 +60,9 @@ namespace GHelper.UI
         private void CalibrateItemHeight()
         {
             if (DrawMode != DrawMode.OwnerDrawFixed || NativeHeight) return;
-            int chrome = PreferredHeight - ItemHeight;
+            // PreferredHeight can retain the font's original height after handle
+            // recreation. Use the actual native height so calibration is stable.
+            int chrome = Height - ItemHeight;
             int target = (int)Math.Round(44 * (DeviceDpi / 192f));
             ItemHeight = Math.Max(1, target - chrome);
         }
@@ -189,7 +210,13 @@ namespace GHelper.UI
 
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == WM_PAINT && DropDownStyle != ComboBoxStyle.Simple)
+            if (m.Msg == WM_ERASEBKGND && DropDownStyle != ComboBoxStyle.Simple)
+            {
+                // The complete background is painted below; native erasing flashes white.
+                m.Result = (nint)1;
+                return;
+            }
+            if ((m.Msg == WM_PAINT || m.Msg == WM_PRINTCLIENT) && DropDownStyle != ComboBoxStyle.Simple)
             {
                 var clientRect = ClientRectangle;
                 var dropDownButtonWidth = SystemInformation.HorizontalScrollBarArrowWidth;
@@ -223,61 +250,96 @@ namespace GHelper.UI
                 var formBackColor = Parent is not null ? Parent.BackColor : BackColor;
 
                 var ps = new PAINTSTRUCT();
-                bool shoulEndPaint = false;
+                bool shouldEndPaint = m.Msg == WM_PAINT && m.WParam == nint.Zero;
                 nint dc;
-                if (m.WParam == nint.Zero)
+                if (shouldEndPaint)
                 {
                     dc = BeginPaint(Handle, ref ps);
-                    m.WParam = dc;
-                    shoulEndPaint = true;
                 }
                 else
                 {
                     dc = m.WParam;
                 }
 
-                using (var g = Graphics.FromHdc(dc))
+                int savedDc = SaveDC(dc);
+                try
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    using (var b = new SolidBrush(formBackColor))
-                        g.FillRectangle(b, clientRect);
-                    using (var b = new SolidBrush(buttonColor))
-                        FillRoundedRectangle(g, b, outerBorder, outerRadius, outerRadius);
+                    using (var g = Graphics.FromHdc(dc))
+                    {
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        using (var b = new SolidBrush(formBackColor))
+                            g.FillRectangle(b, clientRect);
+                        using (var b = new SolidBrush(buttonColor))
+                            FillRoundedRectangle(g, b, outerBorder, outerRadius, outerRadius);
+                    }
+
+                    int textDc = SaveDC(dc);
+                    try
+                    {
+                        IntersectClipRect(dc, innerInnerBorder.Left, innerInnerBorder.Top,
+                            innerInnerBorder.Right, innerInnerBorder.Bottom);
+                        var textMessage = Message.Create(Handle, WM_PRINTCLIENT, dc, (nint)PRF_CLIENT);
+                        DefWndProc(ref textMessage);
+                    }
+                    finally
+                    {
+                        RestoreDC(dc, textDc);
+                    }
+
+                    using (var g = Graphics.FromHdc(dc))
+                    {
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        using (var b = new SolidBrush(arrowColor))
+                            g.FillPolygon(b, arrow);
+                        if (DropDownStyle == ComboBoxStyle.DropDown)
+                            using (var b = new SolidBrush(innerBorderColor))
+                                g.FillRectangle(b, innerInnerBorder);
+                        if (RForm.flatTheme)
+                            using (var p = new Pen(BackColor))
+                                DrawRoundedRectangle(g, p, outerBorder, outerRadius, outerRadius);
+                        else
+                            ControlHelper.DrawGradientBorder(g, outerBorder, outerBorderColor, outerRadius);
+                    }
                 }
-
-                var rgn = CreateRectRgn(innerInnerBorder.Left, innerInnerBorder.Top,
-                    innerInnerBorder.Right, innerInnerBorder.Bottom);
-
-                SelectClipRgn(dc, rgn);
-                DefWndProc(ref m);
-                DeleteObject(rgn);
-                rgn = CreateRectRgn(clientRect.Left, clientRect.Top,
-                    clientRect.Right, clientRect.Bottom);
-                SelectClipRgn(dc, rgn);
-
-                using (var g = Graphics.FromHdc(dc))
+                finally
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    using (var b = new SolidBrush(arrowColor))
-                        g.FillPolygon(b, arrow);
-                    if (DropDownStyle == ComboBoxStyle.DropDown)
-                        using (var b = new SolidBrush(innerBorderColor))
-                            g.FillRectangle(b, innerInnerBorder);
-                    if (RForm.flatTheme)
-                        using (var p = new Pen(BackColor))
-                            DrawRoundedRectangle(g, p, outerBorder, outerRadius, outerRadius);
-                    else
-                        ControlHelper.DrawGradientBorder(g, outerBorder, outerBorderColor, outerRadius);
+                    RestoreDC(dc, savedDc);
+                    if (shouldEndPaint) EndPaint(Handle, ref ps);
                 }
-                if (shoulEndPaint)
-                    EndPaint(Handle, ref ps);
-                DeleteObject(rgn);
+                m.Result = nint.Zero;
             }
             else
                 base.WndProc(ref m);
         }
 
         private const int WM_PAINT = 0xF;
+        private const int WM_ERASEBKGND = 0x14;
+        private const int WM_PRINTCLIENT = 0x318;
+        private const int PRF_CLIENT = 0x4;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct COMBOBOXINFO
+        {
+            public int cbSize;
+            public RECT rcItem, rcButton;
+            public int stateButton;
+            public nint hwndCombo, hwndItem, hwndList;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetComboBoxInfo(nint hwnd, ref COMBOBOXINFO info);
+
+        [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(nint hwnd, string appName, string? idList);
+
+        [DllImport("gdi32.dll")]
+        private static extern int SaveDC(nint dc);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool RestoreDC(nint dc, int savedDc);
+
+        [DllImport("gdi32.dll")]
+        private static extern int IntersectClipRect(nint dc, int left, int top, int right, int bottom);
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
@@ -309,24 +371,6 @@ namespace GHelper.UI
 
         [DllImport("user32.dll")]
         private static extern bool EndPaint(nint hWnd, ref PAINTSTRUCT lpPaint);
-
-        [DllImport("gdi32.dll")]
-        public static extern int SelectClipRgn(nint hDC, nint hRgn);
-
-        [DllImport("user32.dll")]
-        public static extern int GetUpdateRgn(nint hwnd, nint hrgn, bool fErase);
-        public enum RegionFlags
-        {
-            ERROR = 0,
-            NULLREGION = 1,
-            SIMPLEREGION = 2,
-            COMPLEXREGION = 3,
-        }
-        [DllImport("gdi32.dll")]
-        internal static extern bool DeleteObject(nint hObject);
-
-        [DllImport("gdi32.dll")]
-        private static extern nint CreateRectRgn(int x1, int y1, int x2, int y2);
 
         public static void DrawBindingItem(object? sender, DrawItemEventArgs e)
         {

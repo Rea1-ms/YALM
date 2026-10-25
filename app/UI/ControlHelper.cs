@@ -90,6 +90,7 @@ public static class ControlHelper
                 combo.BorderColor = RForm.borderMain;
                 combo.ButtonColor = RForm.buttonMain;
                 combo.ArrowColor = RForm.foreMain;
+                combo.ApplyTheme(_darkMode);
             }
             var rNumeric = control as RNumericUpDown;
             if (rNumeric is not null)

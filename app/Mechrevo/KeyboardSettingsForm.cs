@@ -22,6 +22,7 @@ internal sealed class KeyboardSettingsPanel : UserControl
     {
         _controller = controller;
         _demo = demo;
+        MechrevoUi.SizeCompactButtons(this, _power, _apply, _refresh);
         Dock = DockStyle.Top;
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -169,7 +170,7 @@ internal sealed class KeyboardSettingsPanel : UserControl
 
     private static RButton ActionButton(string text) => new()
     {
-        Text = text, Dock = DockStyle.Top, Height = 26, Margin = new Padding(2, 6, 2, 2),
+        Text = text, Dock = DockStyle.Top, Margin = new Padding(2, 6, 2, 2),
         BorderColor = Color.Transparent, BorderRadius = 2, Secondary = true
     };
 
