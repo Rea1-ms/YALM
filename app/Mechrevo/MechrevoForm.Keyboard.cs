@@ -19,6 +19,14 @@ internal sealed partial class MechrevoForm
     private bool _keyboardBusy;
     private bool _updatingKeyboard;
     private bool _overlayHotkey;
+    private readonly ToolTip _keyboardTips = new();
+    private DateTimeOffset? _savedKeyboardAt;
+    private GcuKeyboardSavedProfile? _savedKeyboard;
+    private GcuKeyboardSettings _demoKeyboard = new()
+    {
+        Type = "SingleZone", Effect = "Single", Brightness = 3, MonochromeIndex = 17, Power = true,
+        ManualIndices = new[] { 1, 5, 9, 13, 21, 25 }, ManualInterval = 4, BreathingIndex = 1
+    };
     private const int OverlayHotkeyId = 0x5941;
 
     [DllImport("user32.dll")]
@@ -58,20 +66,23 @@ internal sealed partial class MechrevoForm
 
         var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 2, 0, 0) };
         for (int i = 0; i < 3; i++) row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
-        _keyboardEffect.Items.AddRange(["恒亮（静态）", "彩虹"]);
+        _keyboardEffect.Items.AddRange(["恒亮（静态）", "彩虹", "自定义"]);
         _keyboardEffect.PlaceholderText = "选择灯效";
         _keyboardEffect.AccessibleName = "笔记本键盘灯效";
         _keyboardEffect.Dock = DockStyle.Top;
         _keyboardEffect.SelectionChangeCommitted += async (_, _) =>
         {
-            if (_updatingKeyboard || _keyboardEffect.SelectedIndex < 0 || _controller is null) return;
-            GcuKeyboardSettings? settings = _controller.Snapshot.Keyboard;
-            if (settings?.Brightness is not int brightness || settings.MonochromeIndex is not int color) return;
-            string effect = _keyboardEffect.SelectedIndex == 0 ? "Single" : "Rainbow";
-            await RunKeyboardAsync(() => _controller.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
+            if (_updatingKeyboard || _keyboardEffect.SelectedIndex < 0) return;
+            string effect = _keyboardEffect.SelectedIndex switch { 0 => "Single", 1 => "Rainbow", _ => "Manual" };
+            if (_demo) { _demoKeyboard = _demoKeyboard with { Effect = effect }; RenderKeyboard(); return; }
+            if (effect == "Manual") await EditManualColorsAsync();
+            else if (CreateKeyboardDraft(effect) is { } draft)
+                await ApplyKeyboardDraftAsync(draft, ReadSavedKeyboard(KeyboardSnapshot));
+            RenderKeyboard();
         };
         _keyboardColor.Dock = _keyboardMore.Dock = DockStyle.Top;
-        _keyboardColor.Click += (_, _) => OpenMoreSettings(selectColor: true);
+        _keyboardColor.Click += async (_, _) => await EditKeyboardColorsAsync();
+        _keyboardTips.SetToolTip(_keyboardEffect, "灯效名缺失时，显示与服务参数一致的厂商保存配置");
         _keyboardMore.Image = GHelper.Properties.Resources.icons8_settings_32;
         _keyboardMore.ImageAlign = ContentAlignment.MiddleRight;
         _keyboardMore.TextAlign = ContentAlignment.MiddleCenter;
@@ -109,9 +120,66 @@ internal sealed partial class MechrevoForm
     private GcuSnapshot KeyboardSnapshot => _demo ? new GcuSnapshot
     {
         IsConnected = true, FnLocked = false, FnLockUpdatedAt = DateTimeOffset.UtcNow,
-        Keyboard = new() { Type = "SingleZone", Effect = "Single", Brightness = 3, MonochromeIndex = 17, Power = true },
+        Keyboard = _demoKeyboard,
         KeyboardUpdatedAt = DateTimeOffset.UtcNow
     } : _controller?.Snapshot ?? new();
+
+    private GcuKeyboardSavedProfile? ReadSavedKeyboard(GcuSnapshot snapshot, bool force = false)
+    {
+        if (!snapshot.IsKeyboardFresh() || snapshot.Keyboard?.SingleZone != true) return null;
+        if (_demo) return new(_demoKeyboard.Effect!, _demoKeyboard, Enumerable.Repeat(new GcuRgb(255, 0, 0), 7).ToArray());
+        if (force || _savedKeyboardAt != snapshot.KeyboardUpdatedAt)
+        {
+            _savedKeyboard = GcuKeyboardStorage.Read(_machine, snapshot.Keyboard);
+            _savedKeyboardAt = snapshot.KeyboardUpdatedAt;
+        }
+        return _savedKeyboard;
+    }
+
+    private GcuKeyboardDraft? CreateKeyboardDraft(string effect) =>
+        GcuKeyboardDraft.Create(KeyboardSnapshot.Keyboard, ReadSavedKeyboard(KeyboardSnapshot), effect);
+
+    private async Task ApplyKeyboardDraftAsync(GcuKeyboardDraft draft, GcuKeyboardSavedProfile? expectedSaved)
+    {
+        if (_closing) return;
+        GcuKeyboardSavedProfile? saved = ReadSavedKeyboard(KeyboardSnapshot, force: true);
+        if (saved is null || expectedSaved is null || saved.Effect != expectedSaved.Effect || saved.IsCircular != expectedSaved.IsCircular ||
+            !saved.Colors.SequenceEqual(expectedSaved.Colors))
+        {
+            _actionStatus.Text = "厂商保存配置已变化或无法读取，请重新读取后再应用。";
+            return;
+        }
+        if (_controller is { } current)
+            await RunKeyboardAsync(() => current.SetKeyboardEffectAsync(draft, _lifetime.Token));
+    }
+
+    private async Task EditKeyboardColorsAsync()
+    {
+        GcuSnapshot snapshot = KeyboardSnapshot;
+        GcuKeyboardSavedProfile? saved = ReadSavedKeyboard(snapshot);
+        string? effect = snapshot.Keyboard?.Effect ?? saved?.Effect;
+        if (effect == "Manual") { await EditManualColorsAsync(); return; }
+        if (effect != "Single" || CreateKeyboardDraft("Single") is not { } draft) return;
+        GcuRgb rgb = draft.ColorAt(0);
+        using var picker = new RColorPicker(Color.FromArgb(rgb.R, rgb.G, rgb.B));
+        if (picker.ShowDialog(this) != DialogResult.OK || _demo) return;
+        draft = draft.WithColor(0, new(picker.Color.R, picker.Color.G, picker.Color.B));
+        await ApplyKeyboardDraftAsync(draft, saved);
+    }
+
+    private async Task EditManualColorsAsync()
+    {
+        if (CreateKeyboardDraft("Manual") is not { } draft) return;
+        GcuKeyboardSavedProfile? saved = ReadSavedKeyboard(KeyboardSnapshot);
+        using var editor = new KeyboardSettingsForm(draft, async () =>
+        {
+            if (!_demo && (_controller is not { } current ||
+                !(await current.RefreshKeyboardAsync(_lifetime.Token)).Confirmed)) return null;
+            saved = ReadSavedKeyboard(KeyboardSnapshot, force: true);
+            return CreateKeyboardDraft("Manual");
+        }, _demo);
+        if (editor.ShowDialog(this) == DialogResult.OK) await ApplyKeyboardDraftAsync(editor.Draft, saved);
+    }
 
     private void RenderKeyboard()
     {
@@ -123,28 +191,38 @@ internal sealed partial class MechrevoForm
         _fnLock.BackColor = _fnLock.Activated ? colorStandard : buttonSecond;
         _fnLock.ForeColor = _fnLock.Activated ? SystemColors.ControlLightLight : SystemColors.ControlDark;
         _fnLock.AccessibleName = "功能键锁定：" + (!snapshot.IsFnLockFresh() ? "未收到" : snapshot.FnLocked == true ? "开启" : "关闭");
-        _keyboardEffect.Enabled = available && !_demo && fresh &&
-            snapshot.Keyboard is { SingleZone: true, Brightness: not null, MonochromeIndex: not null };
+        GcuKeyboardSavedProfile? saved = ReadSavedKeyboard(snapshot);
+        string? effect = snapshot.Keyboard?.Effect ?? saved?.Effect;
+        GcuKeyboardDraft? draft = GcuKeyboardDraft.Create(snapshot.Keyboard, saved, "Single");
+        _keyboardEffect.Enabled = available && fresh && draft?.IsValid == true;
         _keyboardMore.Enabled = !_startupTest;
-        _keyboardColor.Enabled = available && (_demo || fresh && snapshot.Keyboard?.SingleZone == true) &&
-            snapshot.Keyboard?.MonochromeIndex is >= 1 and <= 30;
-        if (fresh && snapshot.Keyboard?.MonochromeIndex is int color && color is >= 1 and <= 30)
+        _keyboardColor.Enabled = available && fresh && draft?.IsValid == true && effect is "Single" or "Manual";
+        _keyboardColor.Multicolor = fresh && effect is "Rainbow" or "Manual";
+        _keyboardColor.AccessibleDescription = effect switch
         {
-            var (r, g, b) = GcuKeyboardProtocol.Palette[color - 1];
-            _keyboardColor.SwatchColor = Color.FromArgb(r, g, b);
+            "Rainbow" => "彩虹颜色由系统循环，无需选色",
+            "Manual" => "编辑六个颜色与轮换间隔", "Single" => "选择恒亮颜色", _ => "等待完整灯效配置"
+        };
+        _keyboardTips.SetToolTip(_keyboardColor, _keyboardColor.AccessibleDescription);
+        if (fresh && effect == "Single" && draft is not null)
+        {
+            GcuRgb rgb = draft.ColorAt(0);
+            _keyboardColor.SwatchColor = Color.FromArgb(rgb.R, rgb.G, rgb.B);
         }
         else _keyboardColor.SwatchColor = null;
         _keyboardStatus.Text = !fresh ? "背光：等待状态" : snapshot.Keyboard?.Power switch
         {
             false => "背光：已关闭", true => "背光：已开启", _ => "背光：开关未回报"
         };
+        if (fresh && snapshot.Keyboard?.Effect is null && saved is not null)
+            _keyboardStatus.Text += " · 灯效来自厂商保存配置";
         _overlayButton.Enabled = !_startupTest;
         _overlayButton.Activated = !_demo && AppConfig.IsOverlay();
         _overlayButton.BackColor = _overlayButton.Activated ? colorEco : buttonSecond;
         _overlayButton.ForeColor = _overlayButton.Activated ? SystemColors.ControlLightLight : SystemColors.ControlDark;
         _overlayButton.AccessibleName = "屏幕叠加：" + (_overlayButton.Activated ? "开启" : "关闭");
         _updatingKeyboard = true;
-        _keyboardEffect.SelectedIndex = !fresh ? -1 : snapshot.Keyboard?.Effect switch { "Single" => 0, "Rainbow" => 1, _ => -1 };
+        _keyboardEffect.SelectedIndex = !fresh ? -1 : effect switch { "Single" => 0, "Rainbow" => 1, "Manual" => 2, _ => -1 };
         _updatingKeyboard = false;
         _settingsForm?.RefreshState();
     }
@@ -161,7 +239,7 @@ internal sealed partial class MechrevoForm
         finally { _keyboardBusy = false; if (!_closing) RenderSnapshot(); }
     }
 
-    private void OpenMoreSettings(bool selectColor = false, bool toggle = false, bool showConnection = false)
+    private void OpenMoreSettings(bool toggle = false)
     {
         if (_settingsForm is not { IsDisposed: false })
             _settingsForm = new MoreSettingsForm(this);
@@ -173,8 +251,6 @@ internal sealed partial class MechrevoForm
         _settingsForm.RefreshState();
         if (!_settingsForm.Visible) _settingsForm.Show(this);
         _settingsForm.Activate();
-        if (showConnection) _settingsForm.ShowConnection();
-        else if (selectColor) _settingsForm.SelectColor();
     }
 
     private HardwareOverlay EnsureOverlay() => _hardwareOverlay ??= new HardwareOverlay(this, ReadOverlay);
@@ -234,6 +310,7 @@ internal sealed partial class MechrevoForm
         if (_overlayHotkey) UnregisterHotKey(Handle, OverlayHotkeyId);
         _overlayConfig?.Close();
         _settingsForm?.Dispose();
+        _keyboardTips.Dispose();
         _hardwareOverlay?.Close();
     }
 }

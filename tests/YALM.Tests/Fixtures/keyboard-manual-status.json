@@ -1,0 +1,15 @@
+{
+  "type": "SingleZone",
+  "effect": null,
+  "brightNess": "4",
+  "powerStatus": "On",
+  "MonochromeIndex": "17",
+  "ManualIndex1": "1",
+  "ManualIndex2": "5",
+  "ManualIndex3": "9",
+  "ManualIndex4": "13",
+  "ManualIndex5": "21",
+  "ManualIndex6": "25",
+  "ManualInterval": "4",
+  "BreathingIndex": "1"
+}

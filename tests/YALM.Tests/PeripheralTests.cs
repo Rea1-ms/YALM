@@ -183,8 +183,17 @@ internal static partial class Program
     private static void SeedKeyboard(FakeTransport fake, string? effect = "Single", int brightness = 3, int color = 17) =>
         fake.Emit("Keyboard/Status", JsonSerializer.Serialize(new
         {
-            type = "SingleZone", effect, brightNess = brightness.ToString(), MonochromeIndex = color.ToString(), powerStatus = "On"
+            type = "SingleZone", effect, brightNess = brightness.ToString(), MonochromeIndex = color.ToString(), powerStatus = "On",
+            ManualIndex1 = "1", ManualIndex2 = "5", ManualIndex3 = "9", ManualIndex4 = "13", ManualIndex5 = "21", ManualIndex6 = "25",
+            ManualInterval = "4", BreathingIndex = "1"
         }));
+
+    private static GcuKeyboardDraft KeyboardDraft(GcuController controller, string effect = "Single", int? color = null)
+    {
+        var live = controller.Snapshot.Keyboard!;
+        var saved = new GcuKeyboardSavedProfile(live.Effect ?? "Manual", live, Enumerable.Repeat(new GcuRgb(255, 0, 0), 7).ToArray());
+        return GcuKeyboardDraft.Create(live, saved, effect)! with { MonochromeIndex = color ?? live.MonochromeIndex!.Value };
+    }
 
     private static async Task KeyboardEffectSendsRequiredFields()
     {
@@ -194,19 +203,22 @@ internal static partial class Program
         fake.Published.Clear();
         fake.OnPublish = (transport, topic, payload) =>
         {
-            if (payload.Contains("GETSTATUS")) SeedKeyboard(transport, brightness: 2, color: 21);
+            if (payload.Contains("GETSTATUS")) SeedKeyboard(transport, color: 21);
             return Task.CompletedTask;
         };
-        Assert.True((await controller.SetKeyboardEffectAsync("Single", 2, 21)).Confirmed, "new full keyboard frame should confirm");
+        Assert.True((await controller.SetKeyboardEffectAsync(KeyboardDraft(controller, color: 21))).Confirmed, "new full keyboard frame should confirm");
         using var command = JsonDocument.Parse(fake.Published[0].Payload);
         var root = command.RootElement;
         Assert.Equal("SetEffectALL", root.GetProperty("function").GetString(), "vendor keyboard effect function");
-        Assert.Equal("2", root.GetProperty("light").GetString(), "brightness travels with the effect");
+        Assert.Equal("3", root.GetProperty("light").GetString(), "preserve the latest brightness with the effect");
         Assert.Equal("21", root.GetProperty("MonochromeIndex").GetString(), "single-zone palette index");
         Assert.Equal("NOT_SAVE", root.GetProperty("nv_save").GetString(), "do not persist to firmware without request");
         foreach (var key in new[] { "ManualIndex1", "ManualIndex2", "ManualIndex3", "ManualIndex4", "ManualIndex5", "ManualIndex6", "ManualInterval", "BreathingIndex" })
             Assert.True(root.TryGetProperty(key, out _), "single-zone firmware rejects missing auxiliary fields");
         Assert.Equal(0, root.GetProperty("color").GetProperty("ColorBuffer")[0].GetProperty("ID").GetInt32(), "RGB color block requires its ID");
+        Assert.Equal(7, root.GetProperty("color").GetProperty("ColorBlocks").GetInt32(), "preserve seven independent custom color buffers");
+        Assert.Equal("25", root.GetProperty("ManualIndex6").GetString(), "do not replace the existing sixth color with a default");
+        Assert.Equal("4", root.GetProperty("ManualInterval").GetString(), "do not reset the existing interval");
         Assert.Equal(1, fake.Published.Count(item => item.Payload.Contains("SetEffectALL")), "writes must not be retried");
     }
 
@@ -220,7 +232,7 @@ internal static partial class Program
             if (payload.Contains("GETSTATUS")) SeedKeyboard(transport, effect: null);
             return Task.CompletedTask;
         };
-        Assert.Equal(GcuWriteStatus.TimedOut, (await controller.SetKeyboardEffectAsync("Single", 3, 17)).Status,
+        Assert.Equal(GcuWriteStatus.Sent, (await controller.SetKeyboardEffectAsync(KeyboardDraft(controller))).Status,
             "missing effect cannot confirm even if brightness matches");
     }
 
@@ -228,13 +240,16 @@ internal static partial class Program
     {
         await using var fake = new FakeTransport();
         await using var controller = await Connected(fake);
+        SeedKeyboard(fake);
+        GcuKeyboardDraft draft = KeyboardDraft(controller);
         fake.Emit("Keyboard/Status", "{\"type\":\"Unknown\",\"powerStatus\":\"On\"}");
         fake.Published.Clear();
-        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync("Single", 3, 17)).Status, "unknown keyboard rejected");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync(draft)).Status, "unknown keyboard rejected");
         Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardPowerAsync(false)).Status, "unknown keyboard power rejected");
         SeedKeyboard(fake);
-        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync("Breathing", 3, 17)).Status, "unsupported effect rejected");
-        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync("Single", 5, 17)).Status, "invalid brightness rejected");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync(draft with { Effect = "Breathing" })).Status, "unsupported effect rejected");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync(draft with { MonochromeIndex = 31 })).Status, "invalid color rejected");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardEffectAsync(draft with { BasedOn = draft.BasedOn with { Brightness = 5 } })).Status, "invalid brightness rejected");
         Assert.Equal(0, fake.Published.Count, "rejections must not publish commands");
     }
 
@@ -253,5 +268,76 @@ internal static partial class Program
         Assert.True((await controller.SetKeyboardPowerAsync(false)).Confirmed, "case-sensitive powerStatus confirms");
         using var command = JsonDocument.Parse(fake.Published[0].Payload);
         Assert.Equal(0, command.RootElement.GetProperty("powerstatus").GetInt32(), "SetPower uses lowercase numeric field");
+    }
+
+    private static async Task KeyboardBrightnessPreservesManualEffect()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        string original = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "keyboard-manual-status.json"));
+        fake.Emit("Keyboard/Status", original);
+        Assert.Equal(4, controller.Snapshot.Keyboard!.Brightness!.Value, "real manual-mode brightness");
+        Assert.True(controller.Snapshot.Keyboard.Effect is null, "missing effect must remain unknown");
+        foreach (int brightness in new[] { 0, 2, 4 })
+        {
+            fake.Published.Clear();
+            var reply = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+            reply["brightNess"] = brightness.ToString();
+            fake.OnPublish = (transport, topic, payload) =>
+            {
+                if (topic == "Keyboard/Ctrl" && payload.Contains("GETSTATUS"))
+                    transport.Emit("Keyboard/Status", reply.ToJsonString());
+                return Task.CompletedTask;
+            };
+            Assert.True((await controller.SetKeyboardBrightnessAsync(brightness)).Confirmed,
+                "brightness can confirm without an effect name or replacing the six-color configuration");
+            using var command = JsonDocument.Parse(fake.Published[0].Payload);
+            var root = command.RootElement;
+            Assert.Equal("SetLightingLevel", root.GetProperty("function").GetString(), "dedicated brightness command");
+            Assert.Equal("Lighting", root.GetProperty("mode").GetString(), "normal lighting mode");
+            Assert.Equal(brightness.ToString(), root.GetProperty("light").GetString(), "brightness uses the vendor string type");
+            Assert.Equal(3, root.EnumerateObject().Count(), "do not send effect, color sequence, interval or power fields");
+            Assert.Equal(1, fake.Published.Count(item => !item.Payload.Contains("GETSTATUS")), "one write per adjustment");
+            Assert.True(fake.Published.All(item => item.Topic == "Keyboard/Ctrl"), "brightness stays on the keyboard channel");
+        }
+    }
+
+    private static async Task KeyboardBrightnessNeedsFreshReadback()
+    {
+        foreach (string reply in new[]
+        {
+            "{\"type\":\"SingleZone\",\"powerStatus\":\"On\"}",
+            "{\"type\":\"SingleZone\",\"brightNess\":\"5\"}",
+            "{\"type\":\"SingleZone\",\"brightNess\":\"3\"}",
+            "{\"type\":\"Unknown\",\"brightNess\":\"4\"}"
+        })
+        {
+            await using var fake = new FakeTransport();
+            await using var controller = await Connected(fake, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(2));
+            SeedKeyboard(fake, effect: null, brightness: 4);
+            fake.OnPublish = (transport, topic, payload) =>
+            {
+                if (payload.Contains("GETSTATUS")) transport.Emit("Keyboard/Status", reply);
+                return Task.CompletedTask;
+            };
+            Assert.Equal(GcuWriteStatus.TimedOut, (await controller.SetKeyboardBrightnessAsync(4)).Status,
+                "cached brightness, invalid brightness and unrelated device frames cannot confirm");
+        }
+    }
+
+    private static async Task KeyboardBrightnessRejectsUnavailableState()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = await Connected(fake);
+        fake.Published.Clear();
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardBrightnessAsync(2)).Status, "missing state rejected");
+        fake.Emit("Keyboard/Status", "{\"type\":\"Unknown\",\"brightNess\":\"4\"}");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardBrightnessAsync(2)).Status, "unknown device rejected");
+        fake.Emit("Keyboard/Status", "{\"type\":\"SingleZone\",\"effect\":\"Single\"}");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardBrightnessAsync(2)).Status, "missing brightness rejected");
+        SeedKeyboard(fake);
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardBrightnessAsync(-1)).Status, "negative brightness rejected");
+        Assert.Equal(GcuWriteStatus.Rejected, (await controller.SetKeyboardBrightnessAsync(5)).Status, "brightness above four rejected");
+        Assert.Equal(0, fake.Published.Count, "rejections must not publish commands");
     }
 }

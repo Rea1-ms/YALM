@@ -5,6 +5,12 @@ namespace GHelper.UI
     public class RColorButton : RButton
     {
         private Color? swatchColor;
+        private bool multicolor;
+        public bool Multicolor
+        {
+            get => multicolor;
+            set { if (multicolor != value) { multicolor = value; Invalidate(); } }
+        }
         public Color? SwatchColor
         {
             get => swatchColor;
@@ -28,7 +34,7 @@ namespace GHelper.UI
             base.OnPaint(pevent);
 
             swatch2Rect = Rectangle.Empty;
-            if (!swatchColor.HasValue && !swatchColor2.HasValue) return;
+            if (!multicolor && !swatchColor.HasValue && !swatchColor2.HasValue) return;
 
             Rectangle rect = ClientRectangle;
             int size = (int)Math.Round(rect.Height * 0.45f);
@@ -41,6 +47,20 @@ namespace GHelper.UI
 
             int gap = (int)Math.Round(margin * 0.6f);
             int x = rect.Width - margin - size;
+            if (multicolor)
+            {
+                var swatch = new Rectangle(x, margin, size, size);
+                using var brush = new LinearGradientBrush(swatch, Color.Red, Color.Magenta, 45f);
+                brush.InterpolationColors = new ColorBlend
+                {
+                    Colors = [Color.Red, Color.Orange, Color.Yellow, Color.Lime, Color.Cyan, Color.Blue, Color.Magenta],
+                    Positions = [0f, 1f / 6, 2f / 6, 3f / 6, 4f / 6, 5f / 6, 1f]
+                };
+                g.FillRectangle(brush, swatch);
+                using var pen = new Pen(RForm.borderMain);
+                g.DrawRectangle(pen, swatch);
+                return;
+            }
             if (swatchColor.HasValue && swatchColor.Value.A > 0)
             {
                 DrawSwatch(g, new Rectangle(x, margin, size, size), radius, swatchColor.Value);

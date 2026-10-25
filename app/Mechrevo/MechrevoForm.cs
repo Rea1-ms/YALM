@@ -17,24 +17,15 @@ internal sealed partial class MechrevoForm : RForm
     private readonly Label _cpuValues = TextLabel("温度：未收到\n风扇：未收到");
     private readonly Label _gpuValues = TextLabel("温度：未收到\n风扇：未收到");
     private bool _fanRpm = AppConfig.IsNotFalse("fan_rpm");
-    private readonly TableLayoutPanel _details = new() { Dock = DockStyle.Top, AutoSize = true, Visible = false, ColumnCount = 1 };
-    private readonly Label _ecStatus = TextLabel("实际转速来源：正在读取 EC…");
     private readonly Label _reportedMode = TextLabel("服务回报模式：未收到");
     private readonly Label _controlStatus = TextLabel(string.Empty);
     private readonly Label _actionStatus = TextLabel(string.Empty);
-    private readonly TextBox _clientId = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _userName = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _password = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
-    private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = 13688, Dock = DockStyle.Fill };
-    private readonly GroupBox _connectionSettings = new() { Text = "本机服务连接", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 20, 12, 12) };
-    private readonly RButton _connect = Button("连接", colorStandard);
-    private readonly RButton _disconnect = Button("断开", colorGray);
     private readonly RButton _openCustomMode = Button("风扇与功耗", colorTurbo);
     private readonly Dictionary<PerformanceMode, RButton> _modeButtons = new();
     private GcuController? _controller;
+    private GcuConnectionOptions? _connectionOptions;
     private CustomModeForm? _customModeForm;
     private string? _machineBlockReason;
-    private bool _autoConnect;
     private bool _connecting;
     private bool _refreshing;
     private bool _ecRefreshing;
@@ -143,67 +134,41 @@ internal sealed partial class MechrevoForm : RForm
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
         _connectionStatus.Anchor = AnchorStyles.Left;
+        _connectionStatus.Cursor = Cursors.Hand;
+        _connectionStatus.AccessibleDescription = "点击重新读取或重连本机服务";
+        _connectionStatus.Click += async (_, _) =>
+        {
+            if (_demo || _startupTest) return;
+            if (_controller?.Snapshot.IsConnected == true) await RefreshAsync();
+            else { LoadConnectionEnvironment(); await ConnectAsync(); }
+        };
         footer.Controls.Add(_connectionStatus, 0, 0);
         var quit = Button("退出", colorGray);
         quit.Height = 32;
         quit.Click += (_, _) => Close();
         footer.Controls.Add(quit, 1, 0);
         AddRow(layout, footer);
-        _details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        AddRow(_details, TextLabel(_machine.DisplayName));
-        AddRow(_details, _ecStatus);
-        AddRow(_details, _connectionSettings);
-        BuildConnectionSettings();
-        AddRow(_details, TextLabel("仅手动切换模式；关闭窗口不会关闭厂商服务。"));
         Controls.Add(layout);
-    }
-
-    private void BuildConnectionSettings()
-    {
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        AddField(fields, "客户端标识", _clientId);
-        AddField(fields, "用户名", _userName);
-        AddField(fields, "密码", _password);
-        AddField(fields, "本机端口", _port);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false };
-        _connect.Width = 100;
-        _disconnect.Width = 100;
-        _connect.Click += async (_, _) => await ConnectAsync();
-        _disconnect.Click += async (_, _) => await DisconnectAsync();
-        actions.Controls.Add(_connect);
-        actions.Controls.Add(_disconnect);
-        fields.Controls.Add(actions, 1, fields.RowCount++);
-        var note = TextLabel("仅连接本机。连接信息只保存在本次运行内存中。\n需要已有厂商服务；此面板不会安装或启动它。");
-        fields.Controls.Add(note, 0, fields.RowCount++);
-        fields.SetColumnSpan(note, 2);
-        _connectionSettings.Controls.Add(fields);
-        _connectionSettings.Visible = !_demo;
     }
 
     private void LoadConnectionEnvironment()
     {
-        _clientId.Text = GcuEnvironment.Get("CLIENT_ID") ?? string.Empty;
-        _userName.Text = GcuEnvironment.Get("USERNAME") ?? string.Empty;
-        _password.Text = GcuEnvironment.Get("PASSWORD") ?? string.Empty;
-        var port = GcuEnvironment.Get("PORT");
-        bool validPort = string.IsNullOrWhiteSpace(port);
-        if (int.TryParse(port, out int number) && number is >= 1 and <= 65535)
+        string? client = GcuEnvironment.Get("CLIENT_ID");
+        string? user = GcuEnvironment.Get("USERNAME");
+        string? password = GcuEnvironment.Get("PASSWORD");
+        string? portText = GcuEnvironment.Get("PORT");
+        int port = 13688;
+        _connectionOptions = null;
+        if (!string.IsNullOrWhiteSpace(portText) && (!int.TryParse(portText, out port) || port is < 1 or > 65535))
         {
-            _port.Value = number;
-            validPort = true;
+            _actionStatus.Text = "环境变量中的端口无效，请修正后点击底部连接状态重试。";
+            return;
         }
-        _autoConnect = validPort && HasConnectionValues();
-        if (!_autoConnect && validPort && GcuConnectionDiscovery.Find(_machine) is { } discovered)
-        {
-            _clientId.Text = discovered.ClientId;
-            _userName.Text = discovered.UserName;
-            _password.Text = discovered.Password;
-            _port.Value = discovered.Port;
-            _autoConnect = true;
-        }
-        if (!validPort) _actionStatus.Text = "环境变量中的端口无效，请在连接设置中填写。";
+        if (!string.IsNullOrWhiteSpace(client) && !string.IsNullOrWhiteSpace(user) && !string.IsNullOrEmpty(password))
+            _connectionOptions = new(client.Trim(), user.Trim(), password, port);
+        else _connectionOptions = GcuConnectionDiscovery.Find(_machine);
+        if (_connectionOptions is not null)
+            _connectionOptions = _connectionOptions with { TurboSupported = _machine.TurboSupported };
     }
 
     private async void OnShown(object? sender, EventArgs e)
@@ -217,8 +182,7 @@ internal sealed partial class MechrevoForm : RForm
             OpenMoreSettings();
             OpenOverlayConfig();
         }
-        if (_autoConnect && !_demo) await ConnectAsync();
-        else if (!_demo && !_startupTest) OpenMoreSettings(showConnection: true);
+        if (_connectionOptions is not null && !_demo) await ConnectAsync();
         if (!_demo && !_startupTest && AppConfig.IsOverlay()) EnsureOverlay().StartOverlay();
     }
 
@@ -236,17 +200,13 @@ internal sealed partial class MechrevoForm : RForm
             Math.Max(area.Top, area.Bottom - 10 - Height));
     }
 
-    private bool HasConnectionValues() => !string.IsNullOrWhiteSpace(_clientId.Text) &&
-        !string.IsNullOrWhiteSpace(_userName.Text) && !string.IsNullOrEmpty(_password.Text);
-
     private async Task ConnectAsync()
     {
         if (_demo || _closing || _connecting || _switching) return;
-        if (!HasConnectionValues())
+        if (_connectionOptions is null) LoadConnectionEnvironment();
+        if (_connectionOptions is null)
         {
-            _actionStatus.Text = "请填写客户端标识、用户名和密码；程序没有内置凭据。";
-            _connectionSettings.Visible = true;
-            OpenMoreSettings(showConnection: true);
+            _actionStatus.Text = "未找到可用的本机连接资料，请检查厂商服务或连接环境变量。";
             return;
         }
         _connecting = true;
@@ -263,13 +223,10 @@ internal sealed partial class MechrevoForm : RForm
             {
                 await _controller.DisconnectAsync();
             }
-            var options = new GcuConnectionOptions(_clientId.Text.Trim(), _userName.Text.Trim(), _password.Text, (int)_port.Value)
-            {
-                TurboSupported = _machine.TurboSupported
-            };
-            await _controller.ConnectAsync(options, _lifetime.Token);
+            await _controller.ConnectAsync(_connectionOptions, _lifetime.Token);
             if (_closing) return;
             _actionStatus.Text = "已连接，正在读取服务状态。";
+            Logger.WriteLine("已连接本机服务。");
             await _controller.RefreshAsync(_lifetime.Token);
         }
         catch (OperationCanceledException) when (_closing) { }
@@ -278,30 +235,8 @@ internal sealed partial class MechrevoForm : RForm
             if (!_closing)
             {
                 _actionStatus.Text = "连接失败：" + SafeMessage(ex.Message);
-                _connectionSettings.Visible = true;
-                if (!_startupTest) OpenMoreSettings(showConnection: true);
+                Logger.WriteLine("本机服务连接失败。");
             }
-        }
-        finally
-        {
-            _connecting = false;
-            if (!_closing) RenderSnapshot();
-        }
-    }
-
-    private async Task DisconnectAsync()
-    {
-        if (_controller is null || _connecting || _switching || _closing) return;
-        _connecting = true;
-        RenderSnapshot();
-        try
-        {
-            await _controller.DisconnectAsync();
-            if (!_closing) _actionStatus.Text = "已断开本面板连接，厂商服务仍正常运行。";
-        }
-        catch (Exception ex)
-        {
-            if (!_closing) _actionStatus.Text = "断开连接时出错：" + SafeMessage(ex.Message);
         }
         finally
         {
@@ -427,7 +362,6 @@ internal sealed partial class MechrevoForm : RForm
             _connectionStatus.Text = "演示 · 未连接服务";
             _cpuValues.Text = "CPU: 48 ℃  风扇: " + (_fanRpm ? "2100 RPM" : "35%");
             _gpuValues.Text = "GPU: 43 ℃  风扇: " + (_fanRpm ? "2000 RPM" : "35%");
-            _ecStatus.Text = "示例状态 · 不读取 EC 实际转速";
             _reportedMode.Text = "性能模式：均衡";
             _controlStatus.Text = "演示布局，可打开风扇与功耗预览曲线。";
             foreach (var (mode, button) in _modeButtons)
@@ -436,7 +370,6 @@ internal sealed partial class MechrevoForm : RForm
                 button.Activated = mode == PerformanceMode.Balanced;
             }
             _openCustomMode.Enabled = true;
-            _connect.Enabled = _disconnect.Enabled = false;
             return;
         }
 
@@ -460,16 +393,6 @@ internal sealed partial class MechrevoForm : RForm
             : Value(snapshot?.GpuFanDuty, connected && snapshot!.IsGpuFanDutyFresh(now), "%");
         _cpuValues.Text = $"CPU: {Value(snapshot?.CpuTemperature, connected && snapshot!.IsCpuTemperatureFresh(now), " ℃")}  风扇: {cpuFan}";
         _gpuValues.Text = $"GPU: {Value(snapshot?.GpuTemperature, connected && snapshot!.IsGpuTemperatureFresh(now), " ℃")}  风扇: {gpuFan}";
-        _ecStatus.Text = !_machine.SupportsModeControl ? "此机型未验证，不读取 EC 实际转速。"
-            : _ecSnapshot switch
-        {
-            { LastError: not null } => "EC 实际转速不可用：" + _ecSnapshot.LastError,
-            _ when fanSafetyActive => "实际转速来源：EC 直读；风扇安全保护已触发。",
-            _ when thermalProtectionActive => "实际转速来源：EC 直读；通用热保护已触发。",
-            _ when ecFresh => $"实际转速来源：EC 直读；保护位：{ProtectionText(_ecSnapshot!)}。",
-            _ when _ecSnapshot is not null => "EC 实际转速已过期，等待下一次读取。",
-            _ => "实际转速来源：正在读取 EC…"
-        };
         bool modeFresh = connected && snapshot!.IsStatusFresh();
         _reportedMode.Text = "性能模式：" + (modeFresh ? ModeName(snapshot!.Mode) : "未收到");
         _controlStatus.Text = thermalProtectionActive ? "EC 报告的通用热保护已触发，模式切换暂时禁用。"
@@ -487,9 +410,7 @@ internal sealed partial class MechrevoForm : RForm
                 _machineBlockReason is null && connected && snapshot!.CanSwitchMode(mode, now);
         }
         _openCustomMode.Enabled = !_startupTest && !_connecting && !_switching && connected && _controller is not null;
-        _connect.Enabled = !_connecting && !_switching;
-        _disconnect.Enabled = connected && !_connecting && !_switching;
-        _clientId.Enabled = _userName.Enabled = _password.Enabled = _port.Enabled = !_connecting && !_switching;
+
     }
 
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -520,14 +441,14 @@ internal sealed partial class MechrevoForm : RForm
             _ecRefreshTimer.Dispose();
             _smokeTimer.Dispose();
             _lifetime.Dispose();
-            _password.Clear();
+            _connectionOptions = null;
             _allowClose = true;
             if (IsHandleCreated) BeginInvoke((Action)Close);
         }
     }
 
-    private string SafeMessage(string message) => string.IsNullOrEmpty(_password.Text)
-        ? message : message.Replace(_password.Text, "[已隐藏]", StringComparison.Ordinal);
+    private string SafeMessage(string message) => string.IsNullOrEmpty(_connectionOptions?.Password)
+        ? message : message.Replace(_connectionOptions.Password, "[已隐藏]", StringComparison.Ordinal);
 
     private static string Value(int? value, bool fresh, string unit) => fresh && value.HasValue
         ? value.Value.ToString() + unit : "未收到";
@@ -541,12 +462,6 @@ internal sealed partial class MechrevoForm : RForm
 
     private static string ModeName(int? mode) => mode switch { 0 => "安静", 1 => "均衡", 2 => "狂暴", 3 => "自定义", _ => "未收到" };
 
-    private static string ProtectionText(EcFanSnapshot snapshot)
-    {
-        if (snapshot.FanSafetyProtect == true) return "风扇安全保护已触发";
-        if (snapshot.GenericThermalProtect == true) return "通用热保护已触发";
-        return "未触发";
-    }
 
     private static Label TextLabel(string text) => new()
     {
@@ -575,13 +490,5 @@ internal sealed partial class MechrevoForm : RForm
         int row = layout.RowCount++;
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(control, 0, row);
-    }
-
-    private static void AddField(TableLayoutPanel fields, string title, Control control)
-    {
-        int row = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        fields.Controls.Add(TextLabel(title), 0, row);
-        fields.Controls.Add(control, 1, row);
     }
 }

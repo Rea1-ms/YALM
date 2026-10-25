@@ -1,0 +1,27 @@
+[
+  {
+    "save_effect": 1, "bSaved": false, "MonochromeIndex": 17,
+    "ManualIndex1": 1, "ManualIndex2": 5, "ManualIndex3": 9,
+    "ManualIndex4": 13, "ManualIndex5": 21, "ManualIndex6": 25,
+    "ManualInterval": 10, "BreathingIndex": 1,
+    "UserDefineColor": { "isCircular": false, "ColorBlocks": 0, "ColorBuffer": null }
+  },
+  {
+    "save_effect": 64, "bSaved": false, "MonochromeIndex": 17,
+    "ManualIndex1": 1, "ManualIndex2": 5, "ManualIndex3": 9,
+    "ManualIndex4": 13, "ManualIndex5": 21, "ManualIndex6": 25,
+    "ManualInterval": 4, "BreathingIndex": 1,
+    "UserDefineColor": {
+      "isCircular": true, "ColorBlocks": 7,
+      "ColorBuffer": [
+        { "ID": 0, "R": 255, "G": 0, "B": 0 },
+        { "ID": 1, "R": 255, "G": 0, "B": 0 },
+        { "ID": 2, "R": 255, "G": 0, "B": 0 },
+        { "ID": 3, "R": 255, "G": 0, "B": 0 },
+        { "ID": 4, "R": 255, "G": 0, "B": 0 },
+        { "ID": 5, "R": 255, "G": 0, "B": 0 },
+        { "ID": 6, "R": 255, "G": 0, "B": 0 }
+      ]
+    }
+  }
+]

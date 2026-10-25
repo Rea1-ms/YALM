@@ -2,184 +2,146 @@ using GHelper.UI;
 
 namespace YALM.Mechrevo;
 
-internal sealed class KeyboardSettingsPanel : UserControl
+// Draft editor only. Opening, choosing a color, refreshing and cancelling do not write to hardware.
+internal sealed class KeyboardSettingsForm : RForm
 {
-    private readonly Func<GcuController?> _controller;
-    private readonly bool _demo;
-    private readonly CancellationTokenSource _lifetime = new();
-    private readonly RComboBox _effect = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly RNumericUpDown _brightness = new() { Minimum = 0, Maximum = 4, Dock = DockStyle.Fill };
-    private readonly RComboBox _color = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly RButton _power = ActionButton("键盘灯开关");
-    private readonly RButton _apply = ActionButton("应用灯效");
-    private readonly RButton _refresh = ActionButton("重新读取");
-    private readonly Label _status = new() { AutoSize = true, MaximumSize = new Size(330, 0), Margin = new Padding(4, 12, 4, 4) };
-    private bool _busy;
-    private bool _dirty;
-    private bool _rendering;
-
-    public KeyboardSettingsPanel(Func<GcuController?> controller, bool demo)
+    private readonly Func<Task<GcuKeyboardDraft?>> _reload;
+    private readonly RColorButton[] _colors = new RColorButton[6];
+    private readonly Slider _interval = new()
     {
-        _controller = controller;
-        _demo = demo;
-        MechrevoUi.SizeCompactButtons(this, _power, _apply, _refresh);
-        Dock = DockStyle.Top;
+        Min = 1, Max = 10, Step = 1, Value = 1, Dock = DockStyle.Fill,
+        Margin = new Padding(8, 0, 8, 0), TabStop = true
+    };
+    private readonly Label _intervalValue = new() { AutoSize = true, Anchor = AnchorStyles.Right, MinimumSize = new Size(46, 0) };
+    private readonly Label _status = new() { AutoSize = true, MaximumSize = new Size(430, 0), Margin = new Padding(4, 12, 4, 8) };
+    private readonly RButton _apply = ActionButton("应用");
+    public GcuKeyboardDraft Draft { get; private set; }
+
+    public KeyboardSettingsForm(GcuKeyboardDraft draft, Func<Task<GcuKeyboardDraft?>> reload, bool demo)
+    {
+        Draft = draft;
+        _reload = reload;
+        Text = "自定义六色轮换";
+        Font = new Font("Microsoft YaHei UI", 9F);
+        AutoScaleMode = AutoScaleMode.Dpi;
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        Margin = Padding.Empty;
-        var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        MinimumSize = new Size(460, 0);
+        MaximizeBox = MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterParent;
+        Padding = new Padding(12);
+        var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Margin = Padding.Empty };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _effect.Items.AddRange(["恒亮（静态）", "彩虹"]);
-        _effect.PlaceholderText = "选择灯效";
-        for (int i = 0; i < GcuKeyboardProtocol.Palette.Length; i++)
+        AddRow(root, new Label { Text = "按 1 → 6 顺序循环，点击色块选择颜色。", AutoSize = true, Margin = new Padding(4, 8, 4, 12) });
+        var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 6, Margin = Padding.Empty };
+        for (int i = 0; i < 6; i++)
         {
-            var (r, g, b) = GcuKeyboardProtocol.Palette[i];
-            _color.Items.Add($"{i + 1} · #{r:X2}{g:X2}{b:X2}");
+            int slot = i + 1;
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 6));
+            var button = new RColorButton
+            {
+                Text = slot.ToString(), AccessibleName = $"第 {slot} 个颜色", Secondary = true, BorderRadius = 2,
+                Dock = DockStyle.Fill, Margin = new Padding(2), TextAlign = ContentAlignment.MiddleLeft
+            };
+            MechrevoUi.SizeCompactButtons(this, button);
+            _colors[i] = button;
+            button.Click += (_, _) =>
+            {
+                GcuRgb rgb = Draft.ColorAt(slot);
+                using var picker = new RColorPicker(Color.FromArgb(rgb.R, rgb.G, rgb.B));
+                if (picker.ShowDialog(this) != DialogResult.OK) return;
+                Draft = Draft.WithColor(slot, new(picker.Color.R, picker.Color.G, picker.Color.B));
+                RenderColors();
+                _status.Text = "颜色尚未应用。";
+            };
+            row.Controls.Add(button, i, 0);
         }
-        AddField(root, "灯效", _effect);
-        AddField(root, "亮度档位", _brightness);
-        AddField(root, "颜色", _color);
-        _effect.SelectionChangeCommitted += (_, _) => MarkDirty();
-        _brightness.ValueChanged += (_, _) => MarkDirty();
-        _color.SelectionChangeCommitted += (_, _) => MarkDirty();
-        _color.DrawMode = DrawMode.OwnerDrawFixed;
-        _color.DrawItem += (_, e) =>
+        AddRow(root, row);
+        var timing = new TableLayoutPanel
         {
-            if (e.Index < 0) return;
-            var (r, g, b) = GcuKeyboardProtocol.Palette[e.Index];
-            using var brush = new SolidBrush(Color.FromArgb(r, g, b));
-            e.Graphics.FillRectangle(brush, e.Bounds.Right - 26, e.Bounds.Top + 3, 20, Math.Max(2, e.Bounds.Height - 6));
+            Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(4, 14, 4, 4)
         };
-        var actions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
-        for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
-        actions.Controls.Add(_power, 0, 0);
-        actions.Controls.Add(_apply, 1, 0);
-        actions.Controls.Add(_refresh, 2, 0);
-        root.Controls.Add(actions, 0, root.RowCount++);
-        root.SetColumnSpan(actions, 2);
-        root.Controls.Add(_status, 0, root.RowCount++);
-        root.SetColumnSpan(_status, 2);
-        var note = new Label
+        timing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        timing.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        timing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        timing.Controls.Add(new Label { Text = "每色显示", AutoSize = true, Anchor = AnchorStyles.Left, Margin = Padding.Empty }, 0, 0);
+        _interval.Height = (int)Math.Round(40F * DeviceDpi / 192F);
+        timing.Controls.Add(_interval, 1, 0);
+        timing.Controls.Add(_intervalValue, 2, 0);
+        _interval.Value = Draft.ManualInterval;
+        RenderInterval();
+        _interval.ValueChanged += (_, _) =>
         {
-            Text = "单区键盘服务不回报当前灯效，与灯光开关无关。\n亮度和颜色随所选灯效一起应用；闲置临时熄灯后的开关回报可能不变。",
-            AutoSize = true, MaximumSize = new Size(330, 0), Margin = new Padding(4, 12, 4, 4)
+            Draft = Draft with { ManualInterval = _interval.Value };
+            RenderInterval();
+            _status.Text = "间隔尚未应用。";
         };
-        root.Controls.Add(note, 0, root.RowCount++);
-        root.SetColumnSpan(note, 2);
-        Controls.Add(root);
-        _power.Click += async (_, _) =>
+        AddRow(root, timing);
+        AddRow(root, _status);
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
+        var cancel = ActionButton("取消");
+        var refresh = ActionButton("重新读取");
+        MechrevoUi.SizeCompactButtons(this, _apply, cancel, refresh);
+        cancel.DialogResult = DialogResult.Cancel;
+        _apply.Enabled = !demo;
+        _apply.Click += (_, _) => { if (Draft.IsValid) DialogResult = DialogResult.OK; };
+        refresh.Click += async (_, _) =>
         {
-            if (_controller() is { } current && current.Snapshot.Keyboard?.Power is bool on)
-                await RunAsync(() => current.SetKeyboardPowerAsync(!on, _lifetime.Token));
-        };
-        _apply.Click += async (_, _) =>
-        {
-            if (_controller() is not { } current || _effect.SelectedIndex < 0 || _color.SelectedIndex < 0) return;
-            string effect = _effect.SelectedIndex == 0 ? "Single" : "Rainbow";
-            int brightness = (int)_brightness.Value;
-            int color = _color.SelectedIndex + 1;
-            await RunAsync(() => current.SetKeyboardEffectAsync(effect, brightness, color, _lifetime.Token));
-        };
-        _refresh.Click += async (_, _) =>
-        {
-            if (_controller() is not { } current || _busy) return;
-            _dirty = false;
-            try { await current.RefreshAsync(_lifetime.Token); }
-            catch (OperationCanceledException) { }
-            catch { _status.Text = "键盘状态读取失败。"; }
-            Render();
-        };
-        Render();
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing && !IsDisposed)
-        {
-            _lifetime.Cancel();
-            _lifetime.Dispose();
-        }
-        base.Dispose(disposing);
-    }
-
-    private void MarkDirty()
-    {
-        if (_rendering) return;
-        _dirty = true;
-        _status.Text = "设置尚未应用。";
-        Render();
-    }
-
-    public void SelectColor()
-    {
-        // Choose the effect explicitly when the service cannot identify it.
-        if (_effect.SelectedIndex < 0) _effect.Focus();
-        else _color.Focus();
-    }
-
-    private async Task RunAsync(Func<Task<GcuWriteResult>> operation)
-    {
-        if (_demo || _busy || IsDisposed) return;
-        _busy = true;
-        _status.Text = "正在等待服务回报…";
-        Render();
-        try
-        {
-            GcuWriteResult result = await operation();
+            refresh.Enabled = _apply.Enabled = false;
+            GcuKeyboardDraft? current;
+            try { current = await _reload(); }
+            catch { current = null; }
             if (IsDisposed) return;
-            _status.Text = result.Message;
-            if (result.Confirmed) _dirty = false;
-        }
-        catch (OperationCanceledException) { }
-        catch { if (!IsDisposed) _status.Text = "设置未完成，请检查厂商服务。"; }
-        finally { _busy = false; if (!IsDisposed) Render(); }
+            refresh.Enabled = true;
+            if (current is null)
+            {
+                _apply.Enabled = false;
+                _status.Text = "未读到完整配置，请等待服务状态更新后重新读取。";
+                return;
+            }
+            Draft = current;
+            _interval.Value = Draft.ManualInterval;
+            _apply.Enabled = !demo;
+            RenderColors();
+            _status.Text = "已读取服务颜色序号与厂商保存的自定义颜色，尚未应用。";
+        };
+        actions.Controls.Add(cancel);
+        actions.Controls.Add(_apply);
+        actions.Controls.Add(refresh);
+        AddRow(root, actions);
+        Controls.Add(root);
+        AcceptButton = _apply;
+        CancelButton = cancel;
+        _status.Text = demo ? "演示 · 仅预览。" : "颜色来自服务序号与厂商保存配置；点击应用后生效。";
+        InitTheme(true);
+        RenderColors();
     }
 
-    public void RefreshState() => Render();
-
-    private void Render()
+    private void RenderColors()
     {
-        if (IsDisposed) return;
-        GcuSnapshot snapshot = _controller()?.Snapshot ?? new();
-        GcuKeyboardSettings? keyboard = _demo
-            ? new() { Type = "SingleZone", Effect = "Single", Brightness = 3, MonochromeIndex = 17, Power = true }
-            : snapshot.Keyboard;
-        bool fresh = _demo || snapshot.IsKeyboardFresh();
-        bool supported = fresh && keyboard?.SingleZone == true;
-        _rendering = true;
-        if (!_dirty)
+        for (int i = 0; i < _colors.Length; i++)
         {
-            _effect.SelectedIndex = keyboard?.Effect switch { "Single" => 0, "Rainbow" => 1, _ => -1 };
-            _brightness.Value = keyboard?.Brightness ?? 0;
-            _color.SelectedIndex = keyboard?.MonochromeIndex is int color ? color - 1 : -1;
+            GcuRgb rgb = Draft.ColorAt(i + 1);
+            _colors[i].SwatchColor = Color.FromArgb(rgb.R, rgb.G, rgb.B);
+            _colors[i].AccessibleDescription = $"#{rgb.R:X2}{rgb.G:X2}{rgb.B:X2}";
         }
-        _rendering = false;
-        _power.Text = "键盘灯：" + (!fresh || keyboard?.Power is null ? "未收到" : keyboard.Power == true ? "开" : "关");
-        _power.Enabled = !_demo && !_busy && supported && keyboard?.Power is not null;
-        _apply.Enabled = !_demo && !_busy && supported && keyboard?.Brightness is not null &&
-            _dirty && _effect.SelectedIndex >= 0 && _color.SelectedIndex >= 0;
-        _refresh.Enabled = !_demo && !_busy && snapshot.IsConnected;
-        _effect.Enabled = supported && !_busy;
-        _brightness.Enabled = supported && !_busy && keyboard?.Brightness is not null;
-        _color.Enabled = supported && !_busy && _effect.SelectedIndex == 0;
-        if (_demo) _status.Text = "演示 · 仅预览，不连接键盘。";
-        else if (!fresh) _status.Text = "等待新鲜的键盘状态。";
-        else if (keyboard?.Brightness is null) _status.Text = "亮度尚未回报，暂时不能应用灯效。";
+    }
+
+    private void RenderInterval()
+    {
+        _intervalValue.Text = $"{_interval.Value} 秒";
+        _interval.AccessibleName = $"每色显示：{_interval.Value} 秒";
     }
 
     private static RButton ActionButton(string text) => new()
     {
-        Text = text, Dock = DockStyle.Top, Margin = new Padding(2, 6, 2, 2),
-        BorderColor = Color.Transparent, BorderRadius = 2, Secondary = true
+        Text = text, Width = 96, Margin = new Padding(2), BorderColor = Color.Transparent, BorderRadius = 2, Secondary = true
     };
 
-    private static void AddField(TableLayoutPanel root, string title, Control input)
+    private static void AddRow(TableLayoutPanel root, Control control)
     {
         int row = root.RowCount++;
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.Controls.Add(new Label { Text = title, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(4, 8, 4, 8) }, 0, row);
-        input.Margin = new Padding(4, 6, 4, 6);
-        root.Controls.Add(input, 1, row);
+        root.Controls.Add(control, 0, row);
     }
 }

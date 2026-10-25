@@ -165,26 +165,59 @@ public sealed class GcuController : IAsyncDisposable
             report => report.Keyboard?.Power == on, "键盘灯开关已回读确认。", ct);
     }
 
-    public Task<GcuWriteResult> SetKeyboardEffectAsync(string effect, int brightness, int colorIndex,
-        CancellationToken ct = default)
+    public Task<GcuWriteResult> RefreshKeyboardAsync(CancellationToken ct = default) =>
+        ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status", GetStatus,
+            report => report.Keyboard?.HasEffectParameters == true,
+            "键盘设置已重新读取。", ct, queryOnly: true);
+
+    public Task<GcuWriteResult> SetKeyboardEffectAsync(GcuKeyboardDraft draft, CancellationToken ct = default)
     {
-        if (!Snapshot.IsKeyboardFresh(_time.GetUtcNow()) || Snapshot.Keyboard?.SingleZone != true)
+        GcuSnapshot before = Snapshot;
+        if (!before.IsKeyboardFresh(_time.GetUtcNow()) || before.Keyboard?.SingleZone != true)
             return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "尚未读到支持的单区键盘状态。"));
-        if (effect is not ("Single" or "Rainbow") || brightness is < 0 or > 4 || colorIndex is < 1 or > 30)
-            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "键盘灯效、亮度或颜色超出支持范围。"));
+        if (!draft.IsValid)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "键盘设置不完整或超出支持范围。"));
+        if (!draft.BasedOn.SameEffectParameters(before.Keyboard) || draft.BasedOn.Effect != before.Keyboard.Effect)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "键盘设置已变化，请重新读取后再应用。"));
+        int brightness = before.Keyboard.Brightness!.Value;
         return ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status",
-            JsonSerializer.Serialize(GcuKeyboardProtocol.SingleZoneEffect(effect, brightness, colorIndex)),
-            report => report.Keyboard is { } keyboard && keyboard.Effect == effect &&
-                keyboard.Brightness == brightness && (effect != "Single" || keyboard.MonochromeIndex == colorIndex),
-            "键盘灯效已回读确认。", ct);
+            JsonSerializer.Serialize(GcuKeyboardProtocol.SingleZoneEffect(draft, brightness)),
+            report => report.Keyboard is { SingleZone: true } keyboard && keyboard.Effect == draft.Effect &&
+                keyboard.Brightness == brightness && keyboard.MonochromeIndex == draft.MonochromeIndex &&
+                keyboard.ManualIndices?.SequenceEqual(draft.ManualIndices) == true &&
+                keyboard.ManualInterval == draft.ManualInterval && keyboard.BreathingIndex == draft.BasedOn.BreathingIndex &&
+                // This service does not expose trustworthy custom RGB readback for SingleZone.
+                (draft.Effect != "Single" || draft.MonochromeIndex != 51) &&
+                (draft.Effect != "Manual" || !draft.ManualIndices.Contains(51)),
+            "键盘灯效已回读确认。", ct, waitForConfirmation: false);
+    }
+
+    public Task<GcuWriteResult> SetKeyboardBrightnessAsync(int brightness, CancellationToken ct = default)
+    {
+        if (!Snapshot.IsKeyboardFresh(_time.GetUtcNow()) ||
+            Snapshot.Keyboard is not { SingleZone: true, Brightness: not null })
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "尚未读到支持的键盘亮度状态。"));
+        if (brightness is < 0 or > 4)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "键盘亮度必须在 0～4 档之间。"));
+        // The dedicated command leaves the current effect and six-color sequence intact.
+        return ConfirmPeripheralAsync("Keyboard/Ctrl", "Keyboard/Status",
+            JsonSerializer.Serialize(new
+            {
+                function = "SetLightingLevel", mode = "Lighting",
+                light = brightness.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            }),
+            report => report.Keyboard is { SingleZone: true } keyboard && keyboard.Brightness == brightness,
+            "键盘亮度已回读确认。", ct);
     }
 
     private async Task<GcuWriteResult> ConfirmPeripheralAsync(string controlTopic, string statusTopic,
-        string payload, Func<GcuSnapshot, bool> confirmed, string success, CancellationToken ct)
+        string payload, Func<GcuSnapshot, bool> confirmed, string success, CancellationToken ct,
+        bool queryOnly = false, bool waitForConfirmation = true)
     {
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
             return new(GcuWriteStatus.Busy, "上一项操作尚未完成。");
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool published = false;
         void Observe(string topic, string message)
         {
             if (topic != statusTopic || !_transport.IsConnected || !Snapshot.IsConnected) return;
@@ -198,12 +231,21 @@ public sealed class GcuController : IAsyncDisposable
             if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
             using var linked = LinkedSession(ct);
-            await _transport.PublishAsync(controlTopic, payload, linked.Token).ConfigureAwait(false);
+            if (!queryOnly)
+            {
+                await _transport.PublishAsync(controlTopic, payload, linked.Token).ConfigureAwait(false);
+                published = true;
+            }
             _transport.MessageReceived += Observe;
             long started = _time.GetTimestamp();
             while (_time.GetElapsedTime(started) < _confirmationTimeout)
             {
                 await _transport.PublishAsync(controlTopic, GetStatus, linked.Token).ConfigureAwait(false);
+                // Lighting does not report its effect name on this service. Send one query,
+                // then release the UI; normal status updates continue independently.
+                if (!waitForConfirmation)
+                    return received.Task.IsCompleted ? new(GcuWriteStatus.Confirmed, success)
+                        : new(GcuWriteStatus.Sent, "灯效请求已发送，状态将自动刷新；实际效果尚未确认。");
                 TimeSpan remaining = _confirmationTimeout - _time.GetElapsedTime(started);
                 if (remaining <= TimeSpan.Zero) break;
                 await Task.WhenAny(received.Task,
@@ -215,11 +257,15 @@ public sealed class GcuController : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            if (!waitForConfirmation && published)
+                return new(GcuWriteStatus.Sent, "灯效请求已发送，状态读取已中断；实际效果尚未确认。");
             return new(ct.IsCancellationRequested ? GcuWriteStatus.Cancelled : GcuWriteStatus.Disconnected,
                 "操作已中断，设置是否生效尚未确认。");
         }
         catch
         {
+            if (!waitForConfirmation && published)
+                return new(GcuWriteStatus.Sent, "灯效请求已发送，状态暂无法读取；实际效果尚未确认。");
             return new(GcuWriteStatus.Failed, "设置请求未完成，请检查厂商服务。");
         }
         finally

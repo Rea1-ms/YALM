@@ -69,7 +69,11 @@ internal static class GcuMessageParser
                     {
                         Type = String(root, "type"), Effect = String(root, "effect"),
                         Brightness = root.TryGetProperty("brightNess", out var brightness) ? Integer(brightness, 0, 4) : null,
-                        MonochromeIndex = root.TryGetProperty("MonochromeIndex", out var color) ? Integer(color, 1, 30) : null,
+                        MonochromeIndex = GcuKeyboardProtocol.IsColorIndex(GcuKeyboardSavedProfile.Number(root, "MonochromeIndex"))
+                            ? GcuKeyboardSavedProfile.Number(root, "MonochromeIndex") : null,
+                        ManualIndices = GcuKeyboardSavedProfile.ReadIndices(root),
+                        ManualInterval = root.TryGetProperty("ManualInterval", out var interval) ? Integer(interval, 1, 10) : null,
+                        BreathingIndex = root.TryGetProperty("BreathingIndex", out var breathing) ? Integer(breathing, 1, 10) : null,
                         Power = String(root, "powerStatus") switch { "On" => true, "Off" => false, _ => null }
                     };
                     snapshot = snapshot with { Keyboard = keyboard, KeyboardUpdatedAt = now };

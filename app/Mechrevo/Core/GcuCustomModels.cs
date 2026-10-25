@@ -25,7 +25,8 @@ public enum GcuWriteStatus
     TimedOut,
     Disconnected,
     Cancelled,
-    Failed
+    Failed,
+    Sent
 }
 
 public sealed record GcuWriteResult(GcuWriteStatus Status, string Message)
