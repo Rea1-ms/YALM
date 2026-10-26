@@ -14,6 +14,7 @@
     <Compile Include="KeyboardColorTests.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="PeripheralTests.cs" />
+    <Compile Include="GpuModeTests.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuKeyboardModels.cs" Link="Core\GcuKeyboardModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanModels.cs" Link="Core\EcFanModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GpuRouteModels.cs" Link="Core\GpuRouteModels.cs" />

@@ -147,6 +147,21 @@ public sealed class GcuController : IAsyncDisposable
             ct: ct).ConfigureAwait(false);
     }
 
+    public Task<GcuWriteResult> SetGpuTargetAsync(GpuDisplayRoute target, CancellationToken ct = default)
+    {
+        GcuSnapshot before = Snapshot;
+        if (!before.CanSetGpuTarget(target, _time.GetUtcNow()))
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "显示切换能力或目标状态尚未确认，暂时不能切换。"));
+        if (before.GpuTarget == target)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "该显示目标已保存，无需重复设置。"));
+        string action = target == GpuDisplayRoute.Direct ? "DGPU_DIRECT_CONNECT_TOGGLE_ON" : "DGPU_DIRECT_CONNECT_TOGGLE_OFF";
+        string name = target == GpuDisplayRoute.Direct ? "独显直连" : "混合模式";
+        return ConfirmPeripheralAsync("Setting/Control", "Setting/Status", JsonSerializer.Serialize(new { Action = action }),
+            report => report.GpuTarget == target && report.GpuSwitchSupported == true,
+            $"已保存显示目标：{name}，重启后生效。", ct,
+            canPublish: current => current.CanSetGpuTarget(target, _time.GetUtcNow()) && current.GpuTarget != target);
+    }
+
     public Task<GcuWriteResult> SetFnLockAsync(bool locked, CancellationToken ct = default)
     {
         if (!Snapshot.IsFnLockFresh(_time.GetUtcNow()))
@@ -213,7 +228,7 @@ public sealed class GcuController : IAsyncDisposable
 
     private async Task<GcuWriteResult> ConfirmPeripheralAsync(string controlTopic, string statusTopic,
         string payload, Func<GcuSnapshot, bool> confirmed, string success, CancellationToken ct,
-        bool queryOnly = false, bool waitForConfirmation = true)
+        bool queryOnly = false, bool waitForConfirmation = true, Func<GcuSnapshot, bool>? canPublish = null)
     {
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
             return new(GcuWriteStatus.Busy, "上一项操作尚未完成。");
@@ -231,6 +246,8 @@ public sealed class GcuController : IAsyncDisposable
         {
             if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
+            if (canPublish is not null && !canPublish(Snapshot))
+                return new(GcuWriteStatus.Rejected, "设置状态已变化或过期，请重新读取后再应用。");
             using var linked = LinkedSession(ct);
             if (!queryOnly)
             {

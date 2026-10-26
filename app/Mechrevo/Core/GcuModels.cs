@@ -55,6 +55,11 @@ public sealed record GcuSnapshot
     public FanCurveTable? FanTable { get; init; }
     public GcuKeyboardSettings? Keyboard { get; init; }
     public bool? FnLocked { get; init; }
+    // Saved reboot target, independent of the operating system's current display route.
+    public GpuDisplayRoute? GpuTarget { get; init; }
+    public bool? GpuSwitchSupported { get; init; }
+    public DateTimeOffset? GpuTargetUpdatedAt { get; init; }
+    public DateTimeOffset? GpuSwitchSupportUpdatedAt { get; init; }
     public int? CpuUsage { get; init; }
     public int? GpuUsage { get; init; }
     public DateTimeOffset? CpuUsageUpdatedAt { get; init; }
@@ -89,6 +94,13 @@ public sealed record GcuSnapshot
         FanTable is not null && Fresh(FanTableUpdatedAt, now);
     public bool IsKeyboardFresh(DateTimeOffset? now = null) => Keyboard is not null && Fresh(KeyboardUpdatedAt, now);
     public bool IsFnLockFresh(DateTimeOffset? now = null) => FnLocked.HasValue && Fresh(FnLockUpdatedAt, now);
+    public bool IsGpuTargetFresh(DateTimeOffset? now = null) =>
+        GpuTarget is GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct && Fresh(GpuTargetUpdatedAt, now);
+    public bool IsGpuSwitchSupportFresh(DateTimeOffset? now = null) =>
+        GpuSwitchSupported.HasValue && Fresh(GpuSwitchSupportUpdatedAt, now);
+    public bool CanSetGpuTarget(GpuDisplayRoute target, DateTimeOffset? now = null) =>
+        target is GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct &&
+        GpuSwitchSupported == true && IsGpuSwitchSupportFresh(now) && IsGpuTargetFresh(now);
     public bool IsCpuUsageFresh(DateTimeOffset? now = null) => CpuUsage.HasValue && Fresh(CpuUsageUpdatedAt, now);
     public bool IsGpuUsageFresh(DateTimeOffset? now = null) => GpuUsage.HasValue && Fresh(GpuUsageUpdatedAt, now);
     public bool CanSwitchMode(PerformanceMode mode, DateTimeOffset? now = null) =>

@@ -10,7 +10,6 @@ internal sealed partial class MechrevoForm
     private readonly RComboBox _keyboardEffect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly RButton _keyboardMore = Button("更多", colorGray);
     private readonly RColorButton _keyboardColor = new() { Text = "颜色", BorderRadius = 2 };
-    private readonly Label _keyboardStatus = TextLabel(string.Empty);
     private readonly RButton _fnLock = Button("FN-Lock", colorStandard);
     private readonly RButton _overlayButton = Button("屏幕叠加", colorEco);
     private MoreSettingsForm? _settingsForm;
@@ -101,9 +100,6 @@ internal sealed partial class MechrevoForm
         _keyboardEffect.SizeChanged += (_, _) => AlignKeyboardRow();
         AlignKeyboardRow();
         AddRow(layout, row);
-        _keyboardStatus.ForeColor = SystemColors.GrayText;
-        _keyboardStatus.Margin = new Padding(2, 2, 2, 16);
-        AddRow(layout, _keyboardStatus);
     }
 
     private void AlignKeyboardRow()
@@ -146,7 +142,7 @@ internal sealed partial class MechrevoForm
         if (saved is null || expectedSaved is null || saved.Effect != expectedSaved.Effect || saved.IsCircular != expectedSaved.IsCircular ||
             !saved.Colors.SequenceEqual(expectedSaved.Colors))
         {
-            _actionStatus.Text = "厂商保存配置已变化或无法读取，请重新读取后再应用。";
+            ShowActionStatus("厂商保存配置已变化或无法读取，请重新读取后再应用。");
             return;
         }
         if (_controller is { } current)
@@ -210,12 +206,14 @@ internal sealed partial class MechrevoForm
             _keyboardColor.SwatchColor = Color.FromArgb(rgb.R, rgb.G, rgb.B);
         }
         else _keyboardColor.SwatchColor = null;
-        _keyboardStatus.Text = !fresh ? "背光：等待状态" : snapshot.Keyboard?.Power switch
+        string backlightStatus = !fresh ? "背光：等待状态" : snapshot.Keyboard?.Power switch
         {
             false => "背光：已关闭", true => "背光：已开启", _ => "背光：开关未回报"
         };
         if (fresh && snapshot.Keyboard?.Effect is null && saved is not null)
-            _keyboardStatus.Text += " · 灯效来自厂商保存配置";
+            backlightStatus += " · 灯效来自厂商保存配置";
+        _keyboardTips.SetToolTip(_keyboardEffect, backlightStatus);
+        _keyboardTips.SetToolTip(_keyboardMore, "更多设置 · " + backlightStatus);
         _overlayButton.Enabled = !_startupTest;
         _overlayButton.Activated = !_demo && AppConfig.IsOverlay();
         _overlayButton.BackColor = _overlayButton.Activated ? colorEco : buttonSecond;
@@ -231,11 +229,11 @@ internal sealed partial class MechrevoForm
     {
         if (_demo || _startupTest || _closing || _keyboardBusy) return;
         _keyboardBusy = true;
-        _actionStatus.Text = "正在设置键盘…";
+        ShowActionStatus("正在设置键盘…");
         RenderSnapshot();
-        try { _actionStatus.Text = (await operation()).Message; }
+        try { ShowActionStatus((await operation()).Message); }
         catch (OperationCanceledException) when (_closing) { }
-        catch { if (!_closing) _actionStatus.Text = "键盘设置未完成，请检查厂商服务。"; }
+        catch { if (!_closing) ShowActionStatus("键盘设置未完成，请检查厂商服务。"); }
         finally { _keyboardBusy = false; if (!_closing) RenderSnapshot(); }
     }
 

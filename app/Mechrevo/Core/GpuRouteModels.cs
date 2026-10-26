@@ -34,6 +34,14 @@ public sealed record GpuRouteSnapshot
     public string? OutputTechnology { get; init; }
     public bool InternalPanelActive { get; init; }
     public string? LastError { get; init; }
+    public DateTimeOffset? UpdatedAt { get; init; }
+
+    public bool IsFresh(DateTimeOffset? now = null)
+    {
+        if (Route == GpuDisplayRoute.Unknown || !UpdatedAt.HasValue) return false;
+        TimeSpan age = (now ?? DateTimeOffset.UtcNow) - UpdatedAt.Value;
+        return age >= TimeSpan.Zero && age <= GcuSnapshot.Freshness;
+    }
 }
 
 public static class GpuRouteInference
@@ -51,7 +59,7 @@ public static class GpuRouteInference
 
     public static GpuDisplayRoute Infer(InternalPanelAdapter panel, DgpuPresence dgpu) => panel switch
     {
-        InternalPanelAdapter.Discrete => GpuDisplayRoute.Direct,
+        InternalPanelAdapter.Discrete when dgpu == DgpuPresence.Present => GpuDisplayRoute.Direct,
         InternalPanelAdapter.Integrated when dgpu == DgpuPresence.Present => GpuDisplayRoute.Hybrid,
         InternalPanelAdapter.Integrated when dgpu is DgpuPresence.Disabled or DgpuPresence.Absent =>
             GpuDisplayRoute.IgpuOnly,

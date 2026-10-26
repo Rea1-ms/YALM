@@ -53,6 +53,26 @@ internal static class GcuMessageParser
                     break;
                 case "Setting/Status":
                     snapshot = ApplyTurboSupport(snapshot, root, now);
+                    if (root.TryGetProperty("DiscreteGpuDirectConnectionSwitch_Status", out _))
+                    {
+                        GpuDisplayRoute? target = String(root, "DiscreteGpuDirectConnectionSwitch_Status") switch
+                        {
+                            "DGPU_DIRECT_CONNECT_TOGGLE_ON" => GpuDisplayRoute.Direct,
+                            "DGPU_DIRECT_CONNECT_TOGGLE_OFF" => GpuDisplayRoute.Hybrid,
+                            _ => null
+                        };
+                        snapshot = snapshot with { GpuTarget = target, GpuTargetUpdatedAt = target.HasValue ? now : null };
+                    }
+                    if (root.TryGetProperty("DiscreteGpuDirectConnectionSwitch_Support", out _))
+                    {
+                        string? support = String(root, "DiscreteGpuDirectConnectionSwitch_Support");
+                        bool? supported = support switch { "Support" => true, "NotSupport" => false, _ => null };
+                        snapshot = snapshot with
+                        {
+                            GpuSwitchSupported = supported,
+                            GpuSwitchSupportUpdatedAt = supported.HasValue ? now : null
+                        };
+                    }
                     if (root.TryGetProperty("FnKey", out var fnElement))
                     {
                         bool? locked = fnElement.ValueKind == JsonValueKind.String ? fnElement.GetString() switch

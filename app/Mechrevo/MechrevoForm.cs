@@ -18,8 +18,9 @@ internal sealed partial class MechrevoForm : RForm
     private readonly Label _gpuValues = TextLabel("温度：未收到\n风扇：未收到");
     private bool _fanRpm = AppConfig.IsNotFalse("fan_rpm");
     private readonly Label _reportedMode = TextLabel("服务回报模式：未收到");
-    private readonly Label _controlStatus = TextLabel(string.Empty);
-    private readonly Label _actionStatus = TextLabel(string.Empty);
+    private string _controlMessage = string.Empty;
+    private string _actionMessage = string.Empty;
+    private DateTimeOffset _actionMessageUntil;
     private readonly RButton _openCustomMode = Button("风扇与功耗", colorTurbo);
     private readonly Dictionary<PerformanceMode, RButton> _modeButtons = new();
     private GcuController? _controller;
@@ -121,19 +122,17 @@ internal sealed partial class MechrevoForm : RForm
         _openCustomMode.Click += (_, _) => OpenCustomMode();
         modes.Controls.Add(_openCustomMode, 3, 0);
         AddRow(layout, modes);
-        var gpuTitle = TextLabel("GPU 与风扇");
-        gpuTitle.Font = new Font(Font, FontStyle.Bold);
-        Control gpuHeading = Heading(gpuTitle, _gpuValues, GHelper.Properties.Resources.icons8_video_card_32);
-        gpuHeading.Margin = new Padding(0, 0, 0, 18);
-        AddRow(layout, gpuHeading);
+        BuildGpuLayout(layout);
         BuildKeyboardLayout(layout);
-        AddRow(layout, _controlStatus);
-        AddRow(layout, _actionStatus);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 10, 0, 0) };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
-        _connectionStatus.Anchor = AnchorStyles.Left;
+        _connectionStatus.AutoSize = false;
+        _connectionStatus.AutoEllipsis = true;
+        _connectionStatus.Dock = DockStyle.Fill;
+        _connectionStatus.TextAlign = ContentAlignment.MiddleLeft;
+        _connectionStatus.Margin = new Padding(0, 0, 6, 0);
         _connectionStatus.Cursor = Cursors.Hand;
         _connectionStatus.AccessibleDescription = "点击重新读取或重连本机服务";
         _connectionStatus.Click += async (_, _) =>
@@ -161,7 +160,7 @@ internal sealed partial class MechrevoForm : RForm
         _connectionOptions = null;
         if (!string.IsNullOrWhiteSpace(portText) && (!int.TryParse(portText, out port) || port is < 1 or > 65535))
         {
-            _actionStatus.Text = "环境变量中的端口无效，请修正后点击底部连接状态重试。";
+            ShowActionStatus("环境变量中的端口无效，请修正后点击底部连接状态重试。");
             return;
         }
         if (!string.IsNullOrWhiteSpace(client) && !string.IsNullOrWhiteSpace(user) && !string.IsNullOrEmpty(password))
@@ -182,6 +181,8 @@ internal sealed partial class MechrevoForm : RForm
             OpenMoreSettings();
             OpenOverlayConfig();
         }
+        await RefreshGpuRouteAsync();
+        if (_closing) return;
         if (_connectionOptions is not null && !_demo) await ConnectAsync();
         if (!_demo && !_startupTest && AppConfig.IsOverlay()) EnsureOverlay().StartOverlay();
     }
@@ -202,15 +203,15 @@ internal sealed partial class MechrevoForm : RForm
 
     private async Task ConnectAsync()
     {
-        if (_demo || _closing || _connecting || _switching) return;
+        if (_demo || _closing || _connecting || _switching || _keyboardBusy) return;
         if (_connectionOptions is null) LoadConnectionEnvironment();
         if (_connectionOptions is null)
         {
-            _actionStatus.Text = "未找到可用的本机连接资料，请检查厂商服务或连接环境变量。";
+            ShowActionStatus("未找到可用的本机连接资料，请检查厂商服务或连接环境变量。");
             return;
         }
         _connecting = true;
-        _actionStatus.Text = "正在连接本机服务…";
+        ShowActionStatus("正在连接本机服务…");
         RenderSnapshot();
         try
         {
@@ -225,7 +226,7 @@ internal sealed partial class MechrevoForm : RForm
             }
             await _controller.ConnectAsync(_connectionOptions, _lifetime.Token);
             if (_closing) return;
-            _actionStatus.Text = "已连接，正在读取服务状态。";
+            ShowActionStatus("已连接，正在读取服务状态。");
             Logger.WriteLine("已连接本机服务。");
             await _controller.RefreshAsync(_lifetime.Token);
         }
@@ -234,7 +235,7 @@ internal sealed partial class MechrevoForm : RForm
         {
             if (!_closing)
             {
-                _actionStatus.Text = "连接失败：" + SafeMessage(ex.Message);
+                ShowActionStatus("连接失败：" + SafeMessage(ex.Message));
                 Logger.WriteLine("本机服务连接失败。");
             }
         }
@@ -252,6 +253,8 @@ internal sealed partial class MechrevoForm : RForm
         try
         {
             if (!_demo) _machineBlockReason = _machine.GetModeControlBlockReason();
+            await RefreshGpuRouteAsync();
+            if (_closing) return;
             RenderSnapshot();
             if (_controller?.Snapshot.IsConnected == true)
                 await _controller.RefreshAsync(_lifetime.Token);
@@ -259,7 +262,7 @@ internal sealed partial class MechrevoForm : RForm
         catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
-            if (!_closing) _actionStatus.Text = "读取状态失败：" + SafeMessage(ex.Message);
+            if (!_closing) ShowActionStatus("读取状态失败：" + SafeMessage(ex.Message));
         }
         finally
         {
@@ -294,7 +297,7 @@ internal sealed partial class MechrevoForm : RForm
 
     private async Task SwitchModeAsync(PerformanceMode mode)
     {
-        if (_demo || _startupTest || _closing || _connecting || _switching || _controller is null) return;
+        if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
         _machineBlockReason = _machine.GetModeControlBlockReason();
         var now = DateTimeOffset.UtcNow;
         bool thermalProtectionActive = _ecSnapshot?.IsFresh(now) == true &&
@@ -303,25 +306,25 @@ internal sealed partial class MechrevoForm : RForm
         if (thermalProtectionActive || !actualRpmFresh || _machineBlockReason is not null ||
             !_controller.Snapshot.CanSwitchMode(mode))
         {
-            _actionStatus.Text = thermalProtectionActive ? "EC 报告的通用热保护已触发，暂时禁止切换模式。"
+            ShowActionStatus(thermalProtectionActive ? "EC 报告的通用热保护已触发，暂时禁止切换模式。"
                 : !actualRpmFresh ? "两路实际转速不完整或已过期，暂时不能切换模式。"
-                : _machineBlockReason ?? "状态不完整或已过期，暂时不能切换模式。";
+                : _machineBlockReason ?? "状态不完整或已过期，暂时不能切换模式。");
             RenderSnapshot();
             return;
         }
         _switching = true;
-        _actionStatus.Text = "等待服务回报模式…";
+        ShowActionStatus("等待服务回报模式…");
         RenderSnapshot();
         try
         {
             var result = await _controller.SetModeAsync(mode, _lifetime.Token);
             if (!_closing)
-                _actionStatus.Text = result.ServiceConfirmed ? "服务已回报，硬件效果待实测。" : SafeMessage(result.Message);
+                ShowActionStatus(result.ServiceConfirmed ? "服务已回报，硬件效果待实测。" : SafeMessage(result.Message));
         }
         catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
-            if (!_closing) _actionStatus.Text = "切换失败：" + SafeMessage(ex.Message);
+            if (!_closing) ShowActionStatus("切换失败：" + SafeMessage(ex.Message));
         }
         finally
         {
@@ -357,19 +360,20 @@ internal sealed partial class MechrevoForm : RForm
     {
         if (_closing || IsDisposed) return;
         RenderKeyboard();
+        RenderGpuMode();
         if (_demo)
         {
-            _connectionStatus.Text = "演示 · 未连接服务";
             _cpuValues.Text = "CPU: 48 ℃  风扇: " + (_fanRpm ? "2100 RPM" : "35%");
             _gpuValues.Text = "GPU: 43 ℃  风扇: " + (_fanRpm ? "2000 RPM" : "35%");
             _reportedMode.Text = "性能模式：均衡";
-            _controlStatus.Text = "演示布局，可打开风扇与功耗预览曲线。";
+            _controlMessage = "演示布局，可打开风扇与功耗预览曲线。";
             foreach (var (mode, button) in _modeButtons)
             {
                 button.Enabled = false;
                 button.Activated = mode == PerformanceMode.Balanced;
             }
             _openCustomMode.Enabled = true;
+            RenderConnectionStatus();
             return;
         }
 
@@ -384,9 +388,6 @@ internal sealed partial class MechrevoForm : RForm
         int? gpuRpm = ecFresh ? _ecSnapshot!.GpuFanRpm
             : connected && snapshot!.IsGpuFanFresh(now) ? snapshot.GpuFanRpm : null;
         bool bothRpmFresh = cpuRpm.HasValue && gpuRpm.HasValue;
-        _connectionStatus.Text = _connecting ? "正在处理连接…" : connected ? "已连接本机服务" : "尚未连接";
-        if (!connected && !string.IsNullOrWhiteSpace(snapshot?.LastError))
-            _connectionStatus.Text = "连接不可用：" + SafeMessage(snapshot.LastError);
         string cpuFan = _fanRpm ? Value(cpuRpm, cpuRpm.HasValue, " RPM")
             : Value(snapshot?.CpuFanDuty, connected && snapshot!.IsCpuFanDutyFresh(now), "%");
         string gpuFan = _fanRpm ? Value(gpuRpm, gpuRpm.HasValue, " RPM")
@@ -395,7 +396,7 @@ internal sealed partial class MechrevoForm : RForm
         _gpuValues.Text = $"GPU: {Value(snapshot?.GpuTemperature, connected && snapshot!.IsGpuTemperatureFresh(now), " ℃")}  风扇: {gpuFan}";
         bool modeFresh = connected && snapshot!.IsStatusFresh();
         _reportedMode.Text = "性能模式：" + (modeFresh ? ModeName(snapshot!.Mode) : "未收到");
-        _controlStatus.Text = thermalProtectionActive ? "EC 报告的通用热保护已触发，模式切换暂时禁用。"
+        _controlMessage = thermalProtectionActive ? "EC 报告的通用热保护已触发，模式切换暂时禁用。"
             : fanSafetyActive ? "风扇安全保护已触发；预设模式仍可切换，后台已提高散热量。"
             : _machineBlockReason ?? (!connected ? "连接后读取状态；不会自动切换性能模式。"
             : !modeFresh || !snapshot!.IsFanFresh() ? "等待完整、新鲜的模式与风扇状态，暂时不能切换。"
@@ -406,11 +407,34 @@ internal sealed partial class MechrevoForm : RForm
         foreach (var (mode, button) in _modeButtons)
         {
             button.Activated = modeFresh && snapshot!.Mode == (int)mode;
-            button.Enabled = !_startupTest && !_connecting && !_switching && !thermalProtectionActive && bothRpmFresh &&
+            button.Enabled = !_startupTest && !_connecting && !_switching && !_keyboardBusy && !thermalProtectionActive && bothRpmFresh &&
                 _machineBlockReason is null && connected && snapshot!.CanSwitchMode(mode, now);
         }
         _openCustomMode.Enabled = !_startupTest && !_connecting && !_switching && connected && _controller is not null;
+        foreach (RButton button in _modeButtons.Values) _keyboardTips.SetToolTip(button, _controlMessage);
+        _keyboardTips.SetToolTip(_reportedMode, _controlMessage);
+        RenderConnectionStatus();
+    }
 
+    private void ShowActionStatus(string message)
+    {
+        _actionMessage = message;
+        _actionMessageUntil = DateTimeOffset.UtcNow.AddSeconds(8);
+        RenderConnectionStatus();
+    }
+
+    private void RenderConnectionStatus()
+    {
+        if (_closing || IsDisposed) return;
+        var snapshot = _controller?.Snapshot;
+        string connection = _demo ? "演示 · 未连接服务" : _connecting ? "正在处理连接…"
+            : snapshot?.IsConnected == true ? "已连接本机服务"
+            : !string.IsNullOrWhiteSpace(snapshot?.LastError) ? "连接不可用：" + SafeMessage(snapshot.LastError)
+            : "尚未连接";
+        _connectionStatus.Text = DateTimeOffset.UtcNow < _actionMessageUntil ? _actionMessage : connection;
+        _connectionStatus.AccessibleName = _connectionStatus.Text;
+        _keyboardTips.SetToolTip(_connectionStatus,
+            string.Join("\n", new[] { connection, _controlMessage, _actionMessage }.Where(text => !string.IsNullOrWhiteSpace(text))));
     }
 
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -478,8 +502,10 @@ internal sealed partial class MechrevoForm : RForm
         var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57));
-        title.Anchor = AnchorStyles.Left;
-        values.Anchor = AnchorStyles.Right;
+        title.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        values.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        values.Margin = Padding.Empty;
+        values.TextAlign = ContentAlignment.TopRight;
         row.Controls.Add(MechrevoUi.Heading(this, title, icon), 0, 0);
         row.Controls.Add(values, 1, 0);
         return row;

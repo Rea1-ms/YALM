@@ -14,20 +14,28 @@ internal static class MechrevoUi
     public static Control Heading(Control owner, Label title, Image icon)
     {
         int iconSize = (int)Math.Round(32F * owner.DeviceDpi / 192F);
+        int iconLeft = (int)Math.Round(8F * owner.DeviceDpi / 192F);
+        int headingHeight = (int)Math.Round(40F * owner.DeviceDpi / 192F);
         var heading = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2,
-            Margin = Padding.Empty, Padding = Padding.Empty
+            Margin = Padding.Empty, Padding = Padding.Empty,
+            MinimumSize = new Size(0, headingHeight)
         };
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, iconLeft + iconSize));
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        heading.RowStyles.Add(new RowStyle(SizeType.Absolute, Math.Max(headingHeight, title.PreferredSize.Height)));
         var picture = new PictureBox
         {
             BackgroundImage = icon, BackgroundImageLayout = ImageLayout.Zoom,
-            Size = new Size(iconSize, iconSize), Anchor = AnchorStyles.Left,
-            Margin = new Padding(0, 0, 4, 0), TabStop = false
+            Size = new Size(iconSize, iconSize), Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            Margin = new Padding(iconLeft, 0, 0, 0), TabStop = false
         };
-        title.Anchor = AnchorStyles.Left;
+        // Upstream places the icon, title and readings at the same top edge.
+        // Default label margins otherwise shift text away from the icon.
+        title.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        title.Margin = Padding.Empty;
+        title.TextAlign = ContentAlignment.TopLeft;
         heading.Controls.Add(picture, 0, 0);
         heading.Controls.Add(title, 1, 0);
         return heading;

@@ -37,6 +37,7 @@ internal static class GpuRouteReader
                 MonitorFriendlyName = panelReadback.MonitorFriendlyName,
                 OutputTechnology = panelReadback.OutputTechnology,
                 InternalPanelActive = panelReadback.IsActive,
+                UpdatedAt = DateTimeOffset.UtcNow,
                 LastError = panel == InternalPanelAdapter.Unknown
                     ? "未能识别内屏所在的显示适配器。"
                     : null
@@ -44,7 +45,7 @@ internal static class GpuRouteReader
         }
         catch (Exception exception)
         {
-            return new GpuRouteSnapshot { LastError = exception.Message };
+            return new GpuRouteSnapshot { LastError = exception.Message, UpdatedAt = DateTimeOffset.UtcNow };
         }
     }
 
