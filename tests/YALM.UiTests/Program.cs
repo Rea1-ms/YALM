@@ -4,21 +4,22 @@ using YALM.Mechrevo;
 
 namespace YALM.UiTests;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly Type MainForm = typeof(GcuController).Assembly.GetType("YALM.Mechrevo.MechrevoForm")!;
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static int _checks;
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.SetHighDpiMode(args.Contains("--96") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             CheckMenuSafety();
+            CheckQuickSwitches(args.Contains("--render"));
             CheckTrayLifecycle();
             CheckSmokeExit();
             CheckSystemExit();

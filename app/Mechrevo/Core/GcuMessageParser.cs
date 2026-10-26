@@ -53,6 +53,16 @@ internal static class GcuMessageParser
                     break;
                 case "Setting/Status":
                     snapshot = ApplyTurboSupport(snapshot, root, now);
+                    foreach (GcuQuickSettingDefinition definition in GcuQuickSettings.Definitions)
+                    {
+                        if (!root.TryGetProperty(definition.Field, out var field)) continue;
+                        bool? enabled = definition.Parse(field.ValueKind == JsonValueKind.String ? field.GetString() : null);
+                        var settings = new System.Collections.Generic.Dictionary<GcuQuickSetting, GcuQuickSettingState>(snapshot.QuickSettings)
+                        {
+                            [definition.Setting] = new(enabled, enabled.HasValue ? now : null)
+                        };
+                        snapshot = snapshot with { QuickSettings = settings };
+                    }
                     if (root.TryGetProperty("DiscreteGpuDirectConnectionSwitch_Status", out _))
                     {
                         GpuDisplayRoute? target = String(root, "DiscreteGpuDirectConnectionSwitch_Status") switch

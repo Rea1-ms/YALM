@@ -46,6 +46,7 @@ internal sealed partial class MechrevoForm : RForm
         Icon = MechrevoUi.AppIcon;
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
         ClientSize = new Size(500, 440);
         MinimumSize = new Size(500, 440);
         StartPosition = FormStartPosition.Manual;

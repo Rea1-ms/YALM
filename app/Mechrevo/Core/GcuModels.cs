@@ -55,6 +55,8 @@ public sealed record GcuSnapshot
     public FanCurveTable? FanTable { get; init; }
     public GcuKeyboardSettings? Keyboard { get; init; }
     public bool? FnLocked { get; init; }
+    public IReadOnlyDictionary<GcuQuickSetting, GcuQuickSettingState> QuickSettings { get; init; } =
+        new Dictionary<GcuQuickSetting, GcuQuickSettingState>();
     // Saved reboot target, independent of the operating system's current display route.
     public GpuDisplayRoute? GpuTarget { get; init; }
     public bool? GpuSwitchSupported { get; init; }
@@ -94,6 +96,7 @@ public sealed record GcuSnapshot
         FanTable is not null && Fresh(FanTableUpdatedAt, now);
     public bool IsKeyboardFresh(DateTimeOffset? now = null) => Keyboard is not null && Fresh(KeyboardUpdatedAt, now);
     public bool IsFnLockFresh(DateTimeOffset? now = null) => FnLocked.HasValue && Fresh(FnLockUpdatedAt, now);
+    public GcuQuickSettingState QuickSetting(GcuQuickSetting setting) => QuickSettings.TryGetValue(setting, out var state) ? state : default;
     public bool IsGpuTargetFresh(DateTimeOffset? now = null) =>
         GpuTarget is GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct && Fresh(GpuTargetUpdatedAt, now);
     public bool IsGpuSwitchSupportFresh(DateTimeOffset? now = null) =>

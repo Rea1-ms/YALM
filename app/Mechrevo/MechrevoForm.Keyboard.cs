@@ -11,6 +11,8 @@ internal sealed partial class MechrevoForm
     private readonly RButton _keyboardMore = Button("更多", colorGray);
     private readonly RColorButton _keyboardColor = new() { Text = "颜色", BorderRadius = 2 };
     private readonly RButton _fnLock = Button("FN-Lock", colorStandard);
+    private readonly RButton _winLock = Button("Win-Lock", colorStandard);
+    private readonly RButton _backlightButton = Button("背光", colorEco);
     private readonly RButton _overlayButton = Button("屏幕叠加", colorEco);
     private MoreSettingsForm? _settingsForm;
     private OverlayConfig? _overlayConfig;
@@ -37,14 +39,16 @@ internal sealed partial class MechrevoForm
     {
         var title = TextLabel("笔记本键盘");
         title.Font = new Font(Font, FontStyle.Bold);
-        var heading = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = Padding.Empty };
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 200F / 3));
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F / 3));
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F / 3));
+        var heading = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 5, Margin = Padding.Empty };
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < 4; i++) heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         heading.Controls.Add(MechrevoUi.Heading(this, title, GHelper.Properties.Resources.icons8_keyboard_32), 0, 0);
-        foreach (RButton button in new[] { _overlayButton, _fnLock })
+        foreach (RButton button in new[] { _backlightButton, _overlayButton, _fnLock, _winLock })
         {
             button.Height = 20;
+            button.AutoSize = true;
+            button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            button.Padding = new Padding(6, 0, 6, 0);
             button.Font = new Font("Segoe UI", 7.125F, FontStyle.Bold);
             button.Secondary = true;
             button.Borderless = true;
@@ -59,8 +63,12 @@ internal sealed partial class MechrevoForm
             if (_controller?.Snapshot.FnLocked is bool locked)
                 await RunKeyboardAsync(() => _controller.SetFnLockAsync(!locked, _lifetime.Token));
         };
-        heading.Controls.Add(_overlayButton, 1, 0);
-        heading.Controls.Add(_fnLock, 2, 0);
+        _winLock.Click += async (_, _) => await ToggleQuickSettingAsync(GcuQuickSetting.WinLock);
+        _backlightButton.Click += async (_, _) => await ToggleBacklightPowerAsync();
+        heading.Controls.Add(_backlightButton, 1, 0);
+        heading.Controls.Add(_overlayButton, 2, 0);
+        heading.Controls.Add(_fnLock, 3, 0);
+        heading.Controls.Add(_winLock, 4, 0);
         AddRow(layout, heading);
 
         var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 2, 0, 0) };
@@ -116,6 +124,8 @@ internal sealed partial class MechrevoForm
     private GcuSnapshot KeyboardSnapshot => _demo ? new GcuSnapshot
     {
         IsConnected = true, FnLocked = false, FnLockUpdatedAt = DateTimeOffset.UtcNow,
+        QuickSettings = GcuQuickSettings.Definitions.ToDictionary(definition => definition.Setting,
+            definition => new GcuQuickSettingState(definition.Setting is GcuQuickSetting.TouchpadHotkey or GcuQuickSetting.AcRecovery, DateTimeOffset.UtcNow)),
         Keyboard = _demoKeyboard,
         KeyboardUpdatedAt = DateTimeOffset.UtcNow
     } : _controller?.Snapshot ?? new();
@@ -187,6 +197,12 @@ internal sealed partial class MechrevoForm
         _fnLock.BackColor = _fnLock.Activated ? colorStandard : buttonSecond;
         _fnLock.ForeColor = _fnLock.Activated ? SystemColors.ControlLightLight : SystemColors.ControlDark;
         _fnLock.AccessibleName = "功能键锁定：" + (!snapshot.IsFnLockFresh() ? "未收到" : snapshot.FnLocked == true ? "开启" : "关闭");
+        GcuQuickSettingState winLock = snapshot.QuickSetting(GcuQuickSetting.WinLock);
+        RenderKeyboardToggle(_winLock, "系统键锁定", snapshot.IsConnected && winLock.IsFresh(), winLock.Enabled, available, colorStandard);
+        bool powerFresh = fresh && snapshot.Keyboard is { SingleZone: true, Power: not null };
+        RenderKeyboardToggle(_backlightButton, "键盘背光", powerFresh, snapshot.Keyboard?.Power, available, colorEco);
+        _keyboardTips.SetToolTip(_backlightButton, _backlightButton.AccessibleName + "；开关保留亮度、灯效和颜色");
+        _keyboardTips.SetToolTip(_winLock, _winLock.AccessibleName + "；开启后禁用系统键");
         GcuKeyboardSavedProfile? saved = ReadSavedKeyboard(snapshot);
         string? effect = snapshot.Keyboard?.Effect ?? saved?.Effect;
         GcuKeyboardDraft? draft = GcuKeyboardDraft.Create(snapshot.Keyboard, saved, "Single");
@@ -225,15 +241,39 @@ internal sealed partial class MechrevoForm
         _settingsForm?.RefreshState();
     }
 
+    private void RenderKeyboardToggle(RButton button, string title, bool fresh, bool? enabled, bool available, Color color)
+    {
+        button.Enabled = available && !_demo && fresh;
+        button.Activated = fresh && enabled == true;
+        button.BackColor = button.Activated ? color : buttonSecond;
+        button.ForeColor = button.Activated ? SystemColors.ControlLightLight : SystemColors.ControlDark;
+        button.AccessibleName = title + "：" + (!fresh ? "未收到" : enabled == true ? "开启" : "关闭");
+    }
+
+    private async Task ToggleQuickSettingAsync(GcuQuickSetting setting)
+    {
+        if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
+        GcuQuickSettingState state = _controller.Snapshot.QuickSetting(setting);
+        if (!_controller.Snapshot.IsConnected || !state.IsFresh() || state.Enabled is not bool enabled) return;
+        await RunKeyboardAsync(() => _controller.SetQuickSettingAsync(setting, !enabled, _lifetime.Token));
+    }
+
+    private async Task ToggleBacklightPowerAsync()
+    {
+        if (!_backlightButton.Enabled || _demo || _keyboardBusy || _controller is not { } controller ||
+            KeyboardSnapshot.Keyboard?.Power is not bool on) return;
+        await RunKeyboardAsync(() => controller.SetKeyboardPowerAsync(!on, _lifetime.Token));
+    }
+
     private async Task RunKeyboardAsync(Func<Task<GcuWriteResult>> operation)
     {
         if (_demo || _startupTest || _closing || _keyboardBusy) return;
         _keyboardBusy = true;
-        ShowActionStatus("正在设置键盘…");
+        ShowActionStatus("正在应用设置…");
         RenderSnapshot();
         try { ShowActionStatus((await operation()).Message); }
         catch (OperationCanceledException) when (_closing) { }
-        catch { if (!_closing) ShowActionStatus("键盘设置未完成，请检查厂商服务。"); }
+        catch { if (!_closing) ShowActionStatus("设置未完成，请检查厂商服务。"); }
         finally { _keyboardBusy = false; if (!_closing) RenderSnapshot(); }
     }
 

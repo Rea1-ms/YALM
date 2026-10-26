@@ -171,6 +171,24 @@ public sealed class GcuController : IAsyncDisposable
             report => report.FnLocked == locked, "功能键锁定已回读确认。", ct);
     }
 
+    public Task<GcuWriteResult> SetQuickSettingAsync(GcuQuickSetting setting, bool enabled, CancellationToken ct = default)
+    {
+        GcuQuickSettingDefinition? definition = GcuQuickSettings.Find(setting);
+        if (definition is null)
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "不支持的快捷设置。"));
+        bool CanPublish(GcuSnapshot current)
+        {
+            GcuQuickSettingState state = current.QuickSetting(setting);
+            return state.IsFresh(_time.GetUtcNow()) && state.Enabled != enabled;
+        }
+        if (!CanPublish(Snapshot))
+            return Task.FromResult(new GcuWriteResult(GcuWriteStatus.Rejected, "设置状态未读取、已过期或与目标相同，请重新读取。"));
+        return ConfirmPeripheralAsync("Setting/Control", "Setting/Status",
+            JsonSerializer.Serialize(new { Action = enabled ? definition.EnableAction : definition.DisableAction }),
+            report => report.QuickSetting(setting).Enabled == enabled,
+            definition.Title + "已回读确认。", ct, canPublish: CanPublish);
+    }
+
     public Task<GcuWriteResult> SetKeyboardPowerAsync(bool on, CancellationToken ct = default)
     {
         if (!Snapshot.IsKeyboardFresh(_time.GetUtcNow()) || Snapshot.Keyboard is not { SingleZone: true, Power: not null })
