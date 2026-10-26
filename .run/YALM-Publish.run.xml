@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="一键打包" type="RunNativeExe" factoryName="Native Executable">
+    <option name="EXE_PATH" value="D:/Program Files/PowerShell/7/pwsh.exe" />
+    <option name="PROGRAM_PARAMETERS" value="-NoLogo -NoProfile -File &quot;$PROJECT_DIR$/Publish.ps1&quot;" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="PASS_PARENT_ENVS" value="1" />
+    <option name="USE_EXTERNAL_CONSOLE" value="0" />
+    <method v="2" />
+  </configuration>
+</component>

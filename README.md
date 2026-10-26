@@ -45,8 +45,14 @@ EC 读取控制码本身要求带写权限的设备句柄，但程序没有包�
 dotnet build YALM.slnx -c Debug
 dotnet run --project tests/YALM.Tests/YALM.Tests.csproj
 dotnet run --project tests/YALM.UiTests/YALM.UiTests.csproj -c Release
-dotnet publish app/YALM.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o artifacts/YALM
+.\Publish.ps1
 ```
+
+在 Rider（开发工具）的运行配置下拉框选择“一键打包”，点击运行即可完成同样的发布、自检和压缩，无需手动输入命令。配置保存在项目的 `.run`（共享运行配置目录），使用本机已安装的 PowerShell 7（命令行工具）；换电脑后若安装位置不同，在配置中调整可执行文件路径即可。
+
+最后一条生成单文件便携版，使用与 G-Helper（华硕控制工具）相同的发布方式：把程序、托管依赖和资源合入 `YALM.exe`（可执行文件），桌面运行时由目标电脑提供。仍需 .NET 10 Desktop Runtime（桌面运行时）及本机适配的厂商后台，不捆绑厂商驱动或认证配置。
+
+脚本先在只含可执行文件的新目录里运行离线演示自检，通过后生成 `D:\Files\CSharp\YALM\artifacts\portable\YALM.exe`（单文件程序）与同目录的 `YALM-win-x64.zip`（分发压缩包）。压缩包只包含程序、许可证、来源与使用说明，不包含缓存和用户设置；运行程序只需可执行文件，公开分发时仍按来源说明提供对应源码和许可证。重复发布会更新这些产物，本轮缓存保留在 `.cache/publish`（发布缓存目录），可自行清理。
 
 第二条是离线回归测试，使用模拟传输，不连接真实服务。`--smoke-test`（演示启动自检）只创建演示窗体并自动退出。`--startup-test`（正常流程启动自检）使用真实连接与正常界面，禁止模式切换，约 12 秒后自动关闭；它与普通窗口共用实例锁，避免同时占用同一认证槽位。`--probe`（只读探针）后接绝对输出文件路径，可在约 15 秒内记录服务状态、EC 实际转速和保护位；它不发送模式切换、风扇曲线或功耗命令。
 
