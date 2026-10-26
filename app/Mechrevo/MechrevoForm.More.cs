@@ -29,6 +29,7 @@ internal sealed partial class MechrevoForm
             _main = main;
             Owner = main;
             Text = "YALM · 更多设置";
+            Icon = MechrevoUi.AppIcon;
             Font = main.Font;
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(500, 235);

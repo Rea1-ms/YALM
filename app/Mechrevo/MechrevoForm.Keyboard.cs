@@ -270,9 +270,15 @@ internal sealed partial class MechrevoForm
 
     private void OpenOverlayConfig()
     {
-        if (_overlayConfig is { IsDisposed: false }) { _overlayConfig.Close(); return; }
+        if (_overlayConfig is { IsDisposed: false })
+        {
+            if (_overlayConfig.Visible) _overlayConfig.Close();
+            else { _overlayConfig.Show(this); _overlayConfig.Activate(); }
+            return;
+        }
         _overlayConfig = new OverlayConfig(ToggleOverlay, ToggleOverlayGameOnly, EnsureOverlay(), this,
             limitedTelemetry: true, readOnly: _demo);
+        _overlayConfig.Icon = MechrevoUi.AppIcon;
         _overlayConfig.Show(this);
     }
 
@@ -299,6 +305,7 @@ internal sealed partial class MechrevoForm
 
     protected override void WndProc(ref Message message)
     {
+        HandleTrayMessage(message.Msg);
         if (message.Msg == 0x0312 && message.WParam.ToInt32() == OverlayHotkeyId) ToggleOverlay();
         base.WndProc(ref message);
     }

@@ -7,6 +7,7 @@
 - 从已安装的原版后台读取模式、温度和风扇控制占空比，并通过厂商驱动只读 EC（嵌入式控制器），每秒读取两路实际转速与保护位；接电状态从系统读取。
 - 手动请求安静、均衡、狂暴模式，并等待后台回报。狂暴要求机型配置明确支持且已接通电源；两路实际转速不完整、过期或保护位触发时，模式切换会暂停。
 - 发现其他控制界面运行、状态缺失或过期时暂停切换。程序不会自动调度，也不会安装、卸载或停止其他控制软件。
+- 关闭主窗口后保留托盘，左键显示／隐藏，再次启动会唤回原窗口。右键可切换性能和显卡模式、操作自定义模式的风扇增强、打开设置及退出；勾选跟随实际状态，显卡保存目标另标“待重启”。
 
 **这一版仍依赖厂商闭源后台和驱动，不是完整的开源硬件驱动替代品。** 原版后台只提供风扇控制占空比，实际转速由本程序直接读取 EC。界面把两者分开显示；例如 31% 表示控制值，转速仍以独立读数判断。显卡温度有时不回报，缺失或过期显示“未收到”。
 
@@ -42,6 +43,7 @@ EC 读取控制码本身要求带写权限的设备句柄，但程序没有包�
 ```powershell
 dotnet build YALM.slnx -c Debug
 dotnet run --project tests/YALM.Tests/YALM.Tests.csproj
+dotnet run --project tests/YALM.UiTests/YALM.UiTests.csproj -c Release
 dotnet publish app/YALM.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o artifacts/YALM
 ```
 

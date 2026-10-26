@@ -957,6 +957,13 @@ namespace GHelper.Properties {
         /// <summary>
         ///   Looks up a localized resource of type System.Drawing.Icon similar to (Icon).
         /// </summary>
+        internal static System.Drawing.Icon yalm {
+            get {
+                object obj = ResourceManager.GetObject("yalm", resourceCulture);
+                return ((System.Drawing.Icon)(obj));
+            }
+        }
+
         internal static System.Drawing.Icon standard {
             get {
                 object obj = ResourceManager.GetObject("standard", resourceCulture);

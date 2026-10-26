@@ -5,6 +5,7 @@ internal static class MechrevoProgram
     // Keep the original coordination name so an older executable cannot connect
     // alongside YALM using the same vendor account slot.
     private const string InstanceMutex = @"Local\MHelper.Mechrevo";
+    private const string ActivationEvent = @"Local\MHelper.Mechrevo.ShowWindow";
     [STAThread]
     public static int Main(string[] args)
     {
@@ -67,13 +68,26 @@ internal static class MechrevoProgram
         if (!ownsMutex)
         {
             if (!smokeTest && !startupTest)
+            {
+                try
+                {
+                    using var signal = EventWaitHandle.OpenExisting(demo ? ActivationEvent + ".Demo" : ActivationEvent);
+                    signal.Set();
+                    return 0;
+                }
+                catch (WaitHandleCannotBeOpenedException) { }
+                catch (UnauthorizedAccessException) { }
                 MessageBox.Show("YALM 或旧版助手已经运行。", "YALM", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
             return smokeTest || startupTest ? 2 : 0;
         }
 
         try
         {
+            using var activationSignal = new EventWaitHandle(false, EventResetMode.AutoReset,
+                demo ? ActivationEvent + ".Demo" : ActivationEvent);
             using var form = new MechrevoForm(MachineInfo.Read(), demo, smokeTest, startupTest);
+            form.SetActivationSignal(activationSignal);
             Application.Run(form);
             return 0;
         }

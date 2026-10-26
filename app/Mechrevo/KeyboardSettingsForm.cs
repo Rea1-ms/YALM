@@ -22,6 +22,7 @@ internal sealed class KeyboardSettingsForm : RForm
         Draft = draft;
         _reload = reload;
         Text = "自定义六色轮换";
+        Icon = MechrevoUi.AppIcon;
         Font = new Font("Microsoft YaHei UI", 9F);
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoSize = true;

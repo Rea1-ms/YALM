@@ -2,6 +2,8 @@ namespace YALM.Mechrevo;
 
 internal static class MechrevoUi
 {
+    public static Icon AppIcon { get; } = GHelper.Properties.Resources.yalm;
+
     // Upstream buttons are 48 px high at its 192-DPI design baseline.
     // Programmatic forms use the current DPI, so convert that size once.
     public static void SizeCompactButtons(Control owner, params GHelper.UI.RButton[] buttons)

@@ -43,6 +43,7 @@ internal sealed partial class MechrevoForm : RForm
         _startupTest = startupTest;
         if (startupTest) _smokeTimer.Interval = 12000;
         Text = "YALM — " + (string.IsNullOrWhiteSpace(machine.DisplayName) ? "机械革命助手" : machine.DisplayName) + (demo ? " · 演示" : "");
+        Icon = MechrevoUi.AppIcon;
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
         ClientSize = new Size(500, 440);
@@ -55,12 +56,13 @@ internal sealed partial class MechrevoForm : RForm
 
         BuildLayout();
         InitTheme(true);
+        InitializeTray();
         TopMost = !_demo && AppConfig.Is("topmost");
         if (!_demo) LoadConnectionEnvironment();
         _machineBlockReason = _demo ? null : _machine.GetModeControlBlockReason();
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _ecRefreshTimer.Tick += async (_, _) => await RefreshEcAsync();
-        _smokeTimer.Tick += (_, _) => { _smokeTimer.Stop(); Close(); };
+        _smokeTimer.Tick += (_, _) => { _smokeTimer.Stop(); ExitApplication(); };
         Shown += OnShown;
         SizeChanged += (_, _) =>
         {
@@ -144,7 +146,7 @@ internal sealed partial class MechrevoForm : RForm
         footer.Controls.Add(_connectionStatus, 0, 0);
         var quit = Button("退出", colorGray);
         quit.Height = 32;
-        quit.Click += (_, _) => Close();
+        quit.Click += (_, _) => ExitApplication();
         footer.Controls.Add(quit, 1, 0);
         AddRow(layout, footer);
         Controls.Add(layout);
@@ -172,6 +174,7 @@ internal sealed partial class MechrevoForm : RForm
 
     private async void OnShown(object? sender, EventArgs e)
     {
+        StartTray();
         _refreshTimer.Start();
         if (!_demo && _machine.SupportsModeControl) _ecRefreshTimer.Start();
         if (_smokeTest || _startupTest) _smokeTimer.Start();
@@ -340,6 +343,7 @@ internal sealed partial class MechrevoForm : RForm
         {
             if (_customModeForm.WindowState == FormWindowState.Minimized)
                 _customModeForm.WindowState = FormWindowState.Normal;
+            if (!_customModeForm.Visible) _customModeForm.Show(this);
             _customModeForm.Activate();
             return;
         }
@@ -374,6 +378,7 @@ internal sealed partial class MechrevoForm : RForm
             }
             _openCustomMode.Enabled = true;
             RenderConnectionStatus();
+            RenderTray();
             return;
         }
 
@@ -414,6 +419,7 @@ internal sealed partial class MechrevoForm : RForm
         foreach (RButton button in _modeButtons.Values) _keyboardTips.SetToolTip(button, _controlMessage);
         _keyboardTips.SetToolTip(_reportedMode, _controlMessage);
         RenderConnectionStatus();
+        RenderTray();
     }
 
     private void ShowActionStatus(string message)
@@ -440,9 +446,17 @@ internal sealed partial class MechrevoForm : RForm
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         if (_allowClose) return;
-        e.Cancel = true;
+        if (!_exitRequested && e.CloseReason == CloseReason.UserClosing && _trayIcon?.Visible == true)
+        {
+            e.Cancel = true;
+            HideToTray();
+            return;
+        }
+        bool systemClosing = e.CloseReason is CloseReason.WindowsShutDown or CloseReason.TaskManagerClosing;
+        e.Cancel = !systemClosing;
         if (_closing) return;
         _closing = true;
+        DisposeTray();
         _refreshTimer.Stop();
         _ecRefreshTimer.Stop();
         _smokeTimer.Stop();
@@ -467,7 +481,7 @@ internal sealed partial class MechrevoForm : RForm
             _lifetime.Dispose();
             _connectionOptions = null;
             _allowClose = true;
-            if (IsHandleCreated) BeginInvoke((Action)Close);
+            if (!systemClosing && IsHandleCreated && !IsDisposed) BeginInvoke((Action)Close);
         }
     }
 

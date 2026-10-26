@@ -36,6 +36,7 @@ internal sealed partial class CustomModeForm : RForm
     private CancellationTokenSource _lifetime = new();
     private GpuDriverPower? _driverPower;
     private bool _busy;
+    internal bool IsOperationPending => _busy;
     private bool _closing;
     private int? _displayedProfile;
     private string? _editorIdentity;
@@ -50,6 +51,7 @@ internal sealed partial class CustomModeForm : RForm
         _ecSnapshot = ecSnapshot ?? throw new ArgumentNullException(nameof(ecSnapshot));
 
         Text = "YALM · 风扇与功耗";
+        Icon = MechrevoUi.AppIcon;
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
         ClientSize = new Size(850, 710);
