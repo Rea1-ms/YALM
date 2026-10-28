@@ -59,9 +59,7 @@ internal static class MechrevoProgram
         bool smokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase);
         bool startupTest = args.Contains("--startup-test", StringComparer.OrdinalIgnoreCase);
         bool demo = smokeTest || args.Contains("--demo", StringComparer.OrdinalIgnoreCase);
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
+        InitializeUi();
 
         using var singleInstance = new Mutex(true,
             demo ? InstanceMutex + ".Demo" : InstanceMutex, out bool ownsMutex);
@@ -96,5 +94,14 @@ internal static class MechrevoProgram
         {
             singleInstance.ReleaseMutex();
         }
+    }
+
+    internal static void InitializeUi()
+    {
+        // Match upstream: Windows scales the whole window between monitors.
+        // These layouts do not support per-monitor reflow during a native drag.
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
     }
 }

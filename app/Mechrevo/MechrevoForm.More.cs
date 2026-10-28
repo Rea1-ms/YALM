@@ -14,6 +14,11 @@ internal sealed partial class MechrevoForm
             Min = 0, Max = 4, Step = 1, Value = 0,
             Dock = DockStyle.Fill, Margin = Padding.Empty, TabStop = true
         };
+        private readonly CheckBox _writePermission = new()
+        {
+            AutoCheck = false, AutoSize = true, ThreeState = false,
+            Margin = new Padding(4, 4, 4, 4)
+        };
         private readonly Dictionary<GcuQuickSetting, CheckBox> _quickSettings = new();
         private readonly ToolTip _tips = new();
         private bool _brightnessDirty;
@@ -67,6 +72,8 @@ internal sealed partial class MechrevoForm
             other.Controls.Add(IconButton(GHelper.Properties.Resources.icons8_search_32, "读取并打开诊断信息", ExportDiagnostics), 1, 0);
             other.Controls.Add(IconButton(GHelper.Properties.Resources.icons8_log_32, "打开日志", OpenLog), 2, 0);
             AddRow(root, other);
+            _writePermission.Click += (_, _) => _main.ToggleWritePermission();
+            AddRow(root, _writePermission);
             foreach (GcuQuickSettingDefinition definition in GcuQuickSettings.Definitions.Where(item => item.Setting != GcuQuickSetting.WinLock))
             {
                 var check = new QuickSettingCheckBox
@@ -124,6 +131,12 @@ internal sealed partial class MechrevoForm
             bool available = snapshot.IsKeyboardFresh() && snapshot.Keyboard is { SingleZone: true, Brightness: not null };
             bool idle = !_main._keyboardBusy && !_main._connecting && !_main._switching && !_main._startupTest;
             _rendering = true;
+            _writePermission.Text = _main.WritePermissionTitle;
+            _writePermission.Checked = _main.WritePermissionGranted;
+            _writePermission.Enabled = _main.CanToggleWritePermission && idle;
+            _writePermission.AccessibleName = _main.WritePermissionTitle + "：" +
+                (_main.WritePermissionGranted ? "已开启" : _main.WritePermissionDescription);
+            _tips.SetToolTip(_writePermission, _main.WritePermissionDescription);
             if (!_brightnessDirty && !_main._keyboardBusy) _brightness.Value = snapshot.Keyboard?.Brightness ?? 0;
             foreach (var (setting, check) in _quickSettings)
             {

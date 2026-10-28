@@ -26,7 +26,9 @@ internal static class MechrevoUi
         };
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, iconLeft + iconSize));
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        heading.RowStyles.Add(new RowStyle(SizeType.Absolute, Math.Max(headingHeight, title.PreferredSize.Height)));
+        // Let the content determine the row height. WinForms scales an absolute
+        // row from its stretched bounds during a DPI change, retaining blank space.
+        heading.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var picture = new PictureBox
         {
             BackgroundImage = icon, BackgroundImageLayout = ImageLayout.Zoom,

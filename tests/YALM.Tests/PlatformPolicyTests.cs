@@ -142,4 +142,55 @@ internal static partial class Program
             await controller.DisconnectAsync();
         }
     }
+
+    private static async Task WritePermissionIsOptInAndSessionScoped()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = new GcuController(fake, confirmationTimeout: TimeSpan.FromMilliseconds(100),
+            confirmationPollInterval: TimeSpan.FromMilliseconds(2));
+        await controller.ConnectAsync(Options with { WritePermissionGranted = false });
+        SeedReadyState(fake, mode: 0, ac: true);
+        fake.Published.Clear();
+
+        Assert.False(controller.WritePermissionGranted, "unverified connection starts read-only");
+        Assert.Equal(ModeSwitchStatus.Rejected, (await controller.SetModeAsync(PerformanceMode.Balanced)).Status,
+            "read-only connection rejects mode writes");
+        Assert.Equal(0, fake.Published.Count, "permission rejection publishes no command");
+
+        Assert.True(controller.SetWritePermission(true), "connected reviewed protocol accepts explicit grant");
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("GETSTATUS", StringComparison.Ordinal))
+                SeedReadyState(transport, mode: 1, ac: true);
+            return Task.CompletedTask;
+        };
+        Assert.Equal(ModeSwitchStatus.ServiceConfirmed, (await controller.SetModeAsync(PerformanceMode.Balanced)).Status,
+            "explicit grant enables an existing reviewed command");
+
+        await controller.DisconnectAsync();
+        Assert.False(controller.WritePermissionGranted, "disconnect revokes the session grant");
+    }
+
+    private static async Task RevokingWritePermissionStopsFollowUpCommand()
+    {
+        await using var fake = new FakeTransport();
+        await using var controller = new GcuController(fake, confirmationTimeout: TimeSpan.FromMilliseconds(100),
+            confirmationPollInterval: TimeSpan.FromMilliseconds(2));
+        await controller.ConnectAsync(Options);
+        SeedReadyState(fake, mode: 0, ac: true);
+        fake.Published.Clear();
+        fake.OnPublish = (transport, topic, payload) =>
+        {
+            if (topic == "Fan/Control" && payload.Contains("OPERATING_GAMING_MODE", StringComparison.Ordinal))
+                controller.SetWritePermission(false);
+            return Task.CompletedTask;
+        };
+
+        Assert.Equal(ModeSwitchStatus.Rejected, (await controller.SetModeAsync(PerformanceMode.Balanced)).Status,
+            "revocation between paired commands rejects the operation");
+        Assert.Equal(1, fake.Published.Count(item => item.Topic == "Fan/Control" &&
+            item.Payload.Contains("OPERATING_GAMING_MODE", StringComparison.Ordinal)), "primary command is sent once");
+        Assert.Equal(0, fake.Published.Count(item => item.Topic == "LCHWOC/Control"),
+            "secondary command is blocked after revocation");
+    }
 }

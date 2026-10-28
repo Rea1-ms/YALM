@@ -41,6 +41,7 @@ internal sealed partial class MechrevoForm : RForm
     private bool _closing;
     private bool _allowClose;
     private EcFanSnapshot? _ecSnapshot;
+    private ArmouryConflictDetector.Status? _armouryConflict;
 
     public MechrevoForm(MachineInfo machine, bool demo = false, bool smokeTest = false, bool startupTest = false)
     {
@@ -67,7 +68,7 @@ internal sealed partial class MechrevoForm : RForm
         InitTheme(true);
         InitializeTray();
         TopMost = !_demo && AppConfig.Is("topmost");
-        _machineBlockReason = _demo ? null : _machine.GetModeControlBlockReason();
+        RefreshMachineBlockReason();
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _ecRefreshTimer.Tick += async (_, _) => await RefreshEcAsync();
         _smokeTimer.Tick += (_, _) => { _smokeTimer.Stop(); ExitApplication(); };
@@ -170,6 +171,8 @@ internal sealed partial class MechrevoForm : RForm
     private async void OnShown(object? sender, EventArgs e)
     {
         StartTray();
+        await DetectArmouryConflictAsync();
+        if (_closing) return;
         _refreshTimer.Start();
         if (!_demo && _machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
         if (_smokeTest || _startupTest) _smokeTimer.Start();
@@ -224,7 +227,7 @@ internal sealed partial class MechrevoForm : RForm
             _machine = await GcuPlatformDiscovery.DiscoverAsync(MachineInfo.Read(), Logger.WriteLine, _lifetime.Token);
             _ecSnapshot = null;
             _ecFanReader = new EcFanReader(readProtection: _machine.SupportsEcProtection);
-            _machineBlockReason = _machine.GetModeControlBlockReason();
+            RefreshMachineBlockReason();
             if (_machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
             LoadConnectionEnvironment();
             if (_connectionOptions is null)
@@ -236,7 +239,7 @@ internal sealed partial class MechrevoForm : RForm
                 {
                     _ecRefreshTimer.Stop();
                     _ecSnapshot = null;
-                    _machineBlockReason = "此接口已接入状态读取，控制功能尚未开放。";
+                    RefreshMachineBlockReason();
                     _nativeSnapshot = await _nativeReader.ReadAsync(_lifetime.Token);
                     ShowActionStatus(_nativeSnapshot.IsConnected ? "已读取" + _nativeReader.DisplayName + "状态。"
                         : "已识别接口，暂未收到有效状态。");
@@ -250,6 +253,9 @@ internal sealed partial class MechrevoForm : RForm
                 _controller.Changed += OnControllerChanged;
             }
             await _controller.ConnectAsync(_connectionOptions, _lifetime.Token);
+            // 已验证主板沿用原有控制；其余机型需在“更多设置”中确认本次连接的写入。
+            _controller.SetWritePermission(_machine.HasVerifiedBoard);
+            RefreshMachineBlockReason();
             if (_closing) return;
             ShowActionStatus("已连接，正在读取服务状态。");
             Logger.WriteLine("已连接本机服务。");
@@ -271,14 +277,26 @@ internal sealed partial class MechrevoForm : RForm
         }
     }
 
+    private async Task DetectArmouryConflictAsync()
+    {
+        if (_demo || _closing) return;
+        ArmouryConflictDetector.Status status = await Task.Run(() => ArmouryConflictDetector.Read(), _lifetime.Token);
+        if (_closing) return;
+        _armouryConflict = status;
+        Logger.WriteLine($"奥创冲突检测：ArmouryCrate.Service={status.ArmouryCrateService}；LightingService={status.LightingService}");
+        if (status.IsConflict)
+            ShowActionStatus("检测到奥创控制服务正在运行，可能与 YALM 冲突；请关闭奥创后重试。");
+        RefreshMachineBlockReason();
+        RenderSnapshot();
+    }
+
     private async Task RefreshAsync()
     {
         if (_closing || _refreshing || _connecting || _switching) return;
         _refreshing = true;
         try
         {
-            if (!_demo) _machineBlockReason = _nativeReader is not null
-                ? "此接口已接入状态读取，控制功能尚未开放。" : _machine.GetModeControlBlockReason();
+            if (!_demo) RefreshMachineBlockReason();
             await RefreshGpuRouteAsync();
             if (_closing) return;
             RenderSnapshot();
@@ -340,7 +358,7 @@ internal sealed partial class MechrevoForm : RForm
     private async Task SwitchModeAsync(PerformanceMode mode)
     {
         if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
-        _machineBlockReason = _machine.GetModeControlBlockReason();
+        RefreshMachineBlockReason();
         var now = DateTimeOffset.UtcNow;
         bool thermalProtectionActive = _ecSnapshot?.IsFresh(now) == true &&
             _ecSnapshot.GenericThermalProtect == true;
@@ -388,7 +406,7 @@ internal sealed partial class MechrevoForm : RForm
         }
 
         _customModeForm = new CustomModeForm(_controller, () => _ecSnapshot, _demo,
-            () => _machine.GetCustomControlBlockReason()) { Owner = this };
+            CurrentCustomControlBlockReason) { Owner = this };
         _customModeForm.FormClosed += (_, _) => _customModeForm = null;
         _customModeForm.Show(this);
     }
@@ -396,7 +414,14 @@ internal sealed partial class MechrevoForm : RForm
     private void OnControllerChanged()
     {
         if (_closing || IsDisposed || !IsHandleCreated) return;
-        try { BeginInvoke((Action)RenderSnapshot); }
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                RefreshMachineBlockReason();
+                RenderSnapshot();
+            }));
+        }
         catch (InvalidOperationException) { }
     }
 

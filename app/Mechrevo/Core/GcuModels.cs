@@ -22,6 +22,10 @@ public sealed record GcuConnectionOptions(string ClientId, string UserName, stri
     public bool CustomControlSupported { get; init; } = true;
     public bool PeripheralControlSupported { get; init; } = true;
 
+    // Initial per-session write grant. Platform policy sets this to false for
+    // unverified machines; the user can explicitly enable it through the UI.
+    public bool WritePermissionGranted { get; init; } = true;
+
     // Avoid exposing credentials through record-generated logging.
     public override string ToString() => $"GcuConnectionOptions {{ ClientId = {ClientId}, Port = {Port} }}";
 }

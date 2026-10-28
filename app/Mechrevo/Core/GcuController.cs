@@ -26,6 +26,11 @@ public sealed class GcuController : IAsyncDisposable
     private bool _modeControlSupported = true;
     private bool _customControlSupported = true;
     private bool _peripheralControlSupported = true;
+    // Hardware writes are opt-in for the current connection.  Protocol
+    // capability and this user grant are intentionally kept separate: the
+    // former controls what the adapter knows how to do, while the latter is
+    // the final session-local safety gate.
+    private bool _writePermissionGranted;
     private bool _disposed;
 
     public GcuController(IGcuTransport transport, TimeProvider? timeProvider = null,
@@ -45,6 +50,39 @@ public sealed class GcuController : IAsyncDisposable
     /// <summary>Raised on the caller or transport thread; subscribers must marshal to their UI.</summary>
     public event Action? Changed;
     public GcuSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
+
+    /// <summary>Whether the current connection has an explicit user grant for hardware writes.</summary>
+    public bool WritePermissionGranted { get { lock (_sync) return _writePermissionGranted; } }
+
+    /// <summary>Whether this connection has at least one reviewed write capability.</summary>
+    public bool WritePermissionAvailable
+    {
+        get
+        {
+            lock (_sync)
+                return _snapshot.IsConnected && (_modeControlSupported || _customControlSupported || _peripheralControlSupported);
+        }
+    }
+
+    /// <summary>
+    /// Grants or revokes hardware writes for this connection. Granting is
+    /// deliberately rejected while disconnected or when the adapter exposes
+    /// no reviewed write capability. Revoking never sends a hardware command.
+    /// </summary>
+    public bool SetWritePermission(bool enabled)
+    {
+        bool changed;
+        lock (_sync)
+        {
+            if (enabled && (!_snapshot.IsConnected ||
+                !(_modeControlSupported || _customControlSupported || _peripheralControlSupported)))
+                return false;
+            changed = _writePermissionGranted != enabled;
+            _writePermissionGranted = enabled;
+        }
+        if (changed) RaiseChanged();
+        return true;
+    }
 
     public async Task ConnectAsync(GcuConnectionOptions options, CancellationToken ct = default)
     {
@@ -72,6 +110,8 @@ public sealed class GcuController : IAsyncDisposable
                     _modeControlSupported = options.ModeControlSupported;
                     _customControlSupported = options.CustomControlSupported;
                     _peripheralControlSupported = options.PeripheralControlSupported;
+                    _writePermissionGranted = options.WritePermissionGranted &&
+                        (options.ModeControlSupported || options.CustomControlSupported || options.PeripheralControlSupported);
                     _snapshot = new GcuSnapshot
                     {
                         IsConnected = _transport.IsConnected,
@@ -144,8 +184,8 @@ public sealed class GcuController : IAsyncDisposable
                     ["Action"] = "OPERATING_CUSTOM_MODE",
                     ["ProfileIndex"] = profileIndex
                 });
-                await _transport.PublishAsync("Fan/Control", primary, token).ConfigureAwait(false);
-                await _transport.PublishAsync("LCHWOC/Control", "{\"IsCustomRun\":true}", token).ConfigureAwait(false);
+                await PublishWriteAsync("Fan/Control", primary, token, WriteCapability.Custom).ConfigureAwait(false);
+                await PublishWriteAsync("LCHWOC/Control", "{\"IsCustomRun\":true}", token, WriteCapability.Custom).ConfigureAwait(false);
             },
             snapshot => snapshot.Mode == 3 &&
                 snapshot.CustomSettings?.ProfileIndex == profileIndex,
@@ -273,12 +313,14 @@ public sealed class GcuController : IAsyncDisposable
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
             if (!queryOnly && !_peripheralControlSupported)
                 return new(GcuWriteStatus.Rejected, "此服务协议尚未适配键盘和设备设置写入。");
+            if (!queryOnly && !WritePermissionGranted)
+                return new(GcuWriteStatus.Rejected, "硬件写入尚未允许，请在更多设置中确认警告后开启。");
             if (canPublish is not null && !canPublish(Snapshot))
                 return new(GcuWriteStatus.Rejected, "设置状态已变化或过期，请重新读取后再应用。");
             using var linked = LinkedSession(ct);
             if (!queryOnly)
             {
-                await _transport.PublishAsync(controlTopic, payload, linked.Token).ConfigureAwait(false);
+                await PublishWriteAsync(controlTopic, payload, linked.Token, WriteCapability.Peripheral).ConfigureAwait(false);
                 published = true;
             }
             _transport.MessageReceived += Observe;
@@ -299,6 +341,10 @@ public sealed class GcuController : IAsyncDisposable
                 if (received.Task.IsCompleted) return new(GcuWriteStatus.Confirmed, success);
             }
             return new(GcuWriteStatus.TimedOut, "请求已发送，服务尚未回报完整的目标设置，请检查实际效果。");
+        }
+        catch (WritePermissionRevokedException)
+        {
+            return new(GcuWriteStatus.Rejected, "硬件写入许可已关闭，后续设置未发送；实际状态请重新读取确认。");
         }
         catch (OperationCanceledException)
         {
@@ -326,8 +372,9 @@ public sealed class GcuController : IAsyncDisposable
             return new(GcuWriteStatus.Rejected, "风扇增强只能在自定义模式中切换。");
 
         return await ConfirmWriteAsync(
-            token => _transport.PublishAsync("Fan/Control",
-                enabled ? "{\"Action\":\"FAN_BOOST_ON\"}" : "{\"Action\":\"FAN_BOOST_OFF\"}", token),
+            token => PublishWriteAsync("Fan/Control",
+                enabled ? "{\"Action\":\"FAN_BOOST_ON\"}" : "{\"Action\":\"FAN_BOOST_OFF\"}", token,
+                WriteCapability.Custom),
             snapshot => snapshot.CustomSettings?.FanBoostEnabled == enabled,
             requireCustomSettings: true,
             success: enabled ? "风扇增强已开启。" : "风扇增强已关闭。",
@@ -353,7 +400,7 @@ public sealed class GcuController : IAsyncDisposable
             [wireKey] = wireValue
         });
         return await ConfirmWriteAsync(
-            token => _transport.PublishAsync("Fan/Control", payload, token),
+            token => PublishWriteAsync("Fan/Control", payload, token, WriteCapability.Custom),
             snapshot => snapshot.CustomSettings is { } current && confirmed(current),
             requireCustomSettings: true,
             success: "服务已回读目标参数。",
@@ -402,7 +449,7 @@ public sealed class GcuController : IAsyncDisposable
             payload[$"T{i}"] = duties[i].ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return await ConfirmWriteAsync(
-            token => _transport.PublishAsync("Fan/Control", JsonSerializer.Serialize(payload), token),
+            token => PublishWriteAsync("Fan/Control", JsonSerializer.Serialize(payload), token, WriteCapability.Custom),
             snapshot => CurveMatches(snapshot.FanTable, target, duties),
             requireFanTable: true,
             success: (target == FanCurveTarget.Cpu ? "CPU" : "GPU") + " 风扇曲线已回读确认。",
@@ -419,6 +466,8 @@ public sealed class GcuController : IAsyncDisposable
                 return new(ModeSwitchStatus.Disconnected, "尚未连接厂商服务。");
             if (!_modeControlSupported)
                 return new(ModeSwitchStatus.Rejected, "此服务协议尚未适配该性能模式。");
+            if (!WritePermissionGranted)
+                return new(ModeSwitchStatus.Rejected, "硬件写入尚未允许，请在更多设置中确认警告后开启。");
             ReadPlatformPower();
             GcuSnapshot before = Snapshot;
             if (!before.CanSwitchMode(mode, _time.GetUtcNow()))
@@ -434,8 +483,10 @@ public sealed class GcuController : IAsyncDisposable
                 PerformanceMode.Turbo => "OPERATING_TURBO_MODE",
                 _ => throw new ArgumentOutOfRangeException(nameof(mode))
             };
-            await _transport.PublishAsync("Fan/Control", $"{{\"Action\":\"{action}\",\"ProfileIndex\":0}}", linked.Token).ConfigureAwait(false);
-            await _transport.PublishAsync("LCHWOC/Control", $"{{\"IsNormalRun\":{(int)mode}}}", linked.Token).ConfigureAwait(false);
+            await PublishWriteAsync("Fan/Control", $"{{\"Action\":\"{action}\",\"ProfileIndex\":0}}", linked.Token,
+                WriteCapability.Mode).ConfigureAwait(false);
+            await PublishWriteAsync("LCHWOC/Control", $"{{\"IsNormalRun\":{(int)mode}}}", linked.Token,
+                WriteCapability.Mode).ConfigureAwait(false);
             // Readbacks before both commands finish cannot confirm this request. A fresh query follows.
             long baseline;
             lock (_sync) baseline = _modeVersion;
@@ -453,6 +504,10 @@ public sealed class GcuController : IAsyncDisposable
             }
             SetError("等待服务模式回读超时；未再次发送切换命令。");
             return new(ModeSwitchStatus.TimedOut, "等待服务回读超时，实际模式尚未确认。");
+        }
+        catch (WritePermissionRevokedException)
+        {
+            return new(ModeSwitchStatus.Rejected, "硬件写入许可已关闭，后续设置未发送；实际模式请重新读取确认。");
         }
         catch (OperationCanceledException)
         {
@@ -502,6 +557,37 @@ public sealed class GcuController : IAsyncDisposable
         await _transport.PublishAsync("Keyboard/Ctrl", GetStatus, ct).ConfigureAwait(false);
     }
 
+    private sealed class WritePermissionRevokedException : Exception
+    {
+        public WritePermissionRevokedException() : base("硬件写入许可已关闭。") { }
+    }
+
+    private enum WriteCapability { Mode, Custom, Peripheral }
+
+    /// <summary>
+    /// Checks the session grant immediately before each side-effecting
+    /// publish. The check and invocation are kept in one lock so revocation
+    /// cannot interleave between them; subsequent commands in a multi-command
+    /// operation are checked independently.
+    /// </summary>
+    private Task PublishWriteAsync(string topic, string payload, CancellationToken ct, WriteCapability capability)
+    {
+        lock (_sync)
+        {
+            bool capabilitySupported = capability switch
+            {
+                WriteCapability.Mode => _modeControlSupported,
+                WriteCapability.Custom => _customControlSupported,
+                WriteCapability.Peripheral => _peripheralControlSupported,
+                _ => false
+            };
+            if (_disposed || !_transport.IsConnected || !_snapshot.IsConnected ||
+                !_writePermissionGranted || !capabilitySupported)
+                throw new WritePermissionRevokedException();
+            return _transport.PublishAsync(topic, payload, ct);
+        }
+    }
+
     private async Task<GcuWriteResult> ConfirmWriteAsync(
         Func<CancellationToken, Task> send,
         Func<GcuSnapshot, bool> confirmed,
@@ -519,6 +605,8 @@ public sealed class GcuController : IAsyncDisposable
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
             if (!queryOnly && !_customControlSupported)
                 return new(GcuWriteStatus.Rejected, "此服务协议尚未适配自定义档位、功耗和风扇曲线写入。");
+            if (!queryOnly && !WritePermissionGranted)
+                return new(GcuWriteStatus.Rejected, "硬件写入尚未允许，请在更多设置中确认警告后开启。");
 
             long modeBaseline;
             long customBaseline;
@@ -565,6 +653,10 @@ public sealed class GcuController : IAsyncDisposable
 
             SetError("等待服务回读超时；参数是否生效尚未确认。");
             return new(GcuWriteStatus.TimedOut, "等待服务回读超时，界面不会把请求显示成已生效。");
+        }
+        catch (WritePermissionRevokedException)
+        {
+            return new(GcuWriteStatus.Rejected, "硬件写入许可已关闭，后续设置未发送；实际状态请重新读取确认。");
         }
         catch (OperationCanceledException)
         {
@@ -752,6 +844,7 @@ public sealed class GcuController : IAsyncDisposable
         lock (_sync)
         {
             _snapshot = new GcuSnapshot { LastError = error };
+            _writePermissionGranted = false;
             _modeVersion = 0;
             _customSettingsVersion = 0;
             _fanTableVersion = 0;

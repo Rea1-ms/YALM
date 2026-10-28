@@ -13,8 +13,7 @@ namespace GHelper
         private readonly Form? host;
         private readonly bool limited;
 
-        public OverlayConfig() : this(() => Program.settingsForm.ToggleOverlay(),
-            () => Program.settingsForm.ToggleOverlayGameOnly(), Program.hardwareOverlay, Program.settingsForm) { }
+        public OverlayConfig() : this(() => { }, () => { }, null, null) { }
 
         public OverlayConfig(Action toggleOverlay, Action toggleGameOnly, HardwareOverlay? hardwareOverlay,
             Form? owner, bool limitedTelemetry = false, bool readOnly = false)

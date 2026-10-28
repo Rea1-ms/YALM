@@ -15,11 +15,27 @@ internal static partial class Program
     {
         try
         {
-            Application.SetHighDpiMode(args.Contains("--96") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
+            if (args.Contains("--96") || args.Contains("--per-monitor"))
+            {
+                // Keep alternate scaling modes for isolated layout stress checks.
+                Application.SetHighDpiMode(args.Contains("--96") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+            }
+            else
+            {
+                MainForm.Assembly.GetType("YALM.Mechrevo.MechrevoProgram")!
+                    .GetMethod("InitializeUi", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
+                Require(Application.HighDpiMode == HighDpiMode.SystemAware, "production UI uses upstream whole-window DPI scaling");
+            }
             Logger.appPath = Path.GetFullPath(".cache/service-logging-20261026/logs");
             Logger.logFile = Path.Combine(Logger.appPath, "log.txt");
+            CheckMainLayout(args.Contains("--render"));
+            if (args.Contains("--layout-only"))
+            {
+                Console.WriteLine($"PASS: {_checks} offline window layout checks");
+                return 0;
+            }
             CheckDiagnostics();
             CheckBridgePackages(args);
             CheckPlatforms(args);
@@ -37,11 +53,11 @@ internal static partial class Program
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
-    private static Form CreateForm(bool demo = false, bool smoke = false)
+    private static Form CreateForm(bool demo = false, bool smoke = false, bool startup = false)
     {
         Type machineType = typeof(GcuController).Assembly.GetType("YALM.Mechrevo.MachineInfo")!;
         object machine = Activator.CreateInstance(machineType, "MECHREVO", "Offline test", "", "GM6PX0X")!;
-        return (Form)Activator.CreateInstance(MainForm, machine, demo, smoke, false)!;
+        return (Form)Activator.CreateInstance(MainForm, machine, demo, smoke, startup)!;
     }
 
     private static void CheckMenuSafety()

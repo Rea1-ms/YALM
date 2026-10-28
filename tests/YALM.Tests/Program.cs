@@ -27,6 +27,8 @@ internal static partial class Program
             ("read-only platforms retain status refresh", PlatformPolicyKeepsReadOnlyRefreshes),
             ("platform permissions are independent", PlatformPolicyCapabilitiesRemainIndependent),
             ("reconnection replaces platform permissions", PlatformPolicyReplacesPermissionsOnReconnect),
+            ("write permission is opt-in and session-scoped", WritePermissionIsOptInAndSessionScoped),
+            ("revoking write permission blocks a secondary command", RevokingWritePermissionStopsFollowUpCommand),
             ("invalid readings never become zero", InvalidReadingsNeverBecomeZero),
             ("fields expire independently", FieldsExpireIndependently),
             ("EC fan readings decode RPM and protection", EcFanReadingsDecode),

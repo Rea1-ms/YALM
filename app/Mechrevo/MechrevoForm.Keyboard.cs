@@ -269,7 +269,7 @@ internal sealed partial class MechrevoForm
     private async Task RunKeyboardAsync(Func<Task<GcuWriteResult>> operation)
     {
         if (_demo || _startupTest || _closing || _keyboardBusy) return;
-        _machineBlockReason = _machine.GetModeControlBlockReason();
+        RefreshMachineBlockReason();
         if (!_machine.SupportsPeripheralControl)
         {
             ShowActionStatus("此协议尚未适配键盘与快捷设置，当前仅查看。");

@@ -34,6 +34,18 @@
     <None Remove="logs\**" />
   </ItemGroup>
 
+  <!-- The product is now Mechrevo-only. Keep the archived upstream ASUS
+       implementation out of the active assembly while retaining the source
+       snapshot in .cache/asus_backup for reference. -->
+  <ItemGroup>
+    <Compile Remove="Program.cs;Asus*.cs;Extra*.cs;Fans*.cs;Handheld*.cs;HardwareControl.cs;Matrix*.cs;NativeMethods.cs;Settings*.cs;Slash*.cs;Updates*.cs" />
+    <EmbeddedResource Remove="Asus*.resx;Extra*.resx;Fans*.resx;Handheld*.resx;Matrix*.resx;Settings*.resx;Slash*.resx;Updates*.resx" />
+    <Compile Remove="Ally\**;AnimeMatrix\**;AutoUpdate\**;Battery\**;Fan\**;Gpu\**;Input\**;Mode\**;Pawn\**;Peripherals\**;USB\**" />
+    <Compile Remove="Display\**;Helpers\**" />
+    <Compile Include="Display\DisplayNative.cs" />
+    <Compile Include="Helpers\Drawing.cs;Helpers\Logger.cs;Helpers\MemoryHelper.cs;Helpers\OSDBase.cs;Helpers\ProcessHelper.cs" />
+  </ItemGroup>
+
 
   <ItemGroup>
     <Content Include="favicon.ico">

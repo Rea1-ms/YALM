@@ -165,7 +165,10 @@ internal static class GcuConnectionDiscovery
         TurboSupported = machine.TurboSupported,
         ModeControlSupported = machine.SupportsModeControl,
         CustomControlSupported = machine.SupportsCustomControl,
-        PeripheralControlSupported = machine.SupportsPeripheralControl
+        PeripheralControlSupported = machine.SupportsPeripheralControl,
+        // An unverified machine may expose a reviewed control protocol, but writes
+        // remain opt-in until the user confirms the warning for this connection.
+        WritePermissionGranted = machine.HasVerifiedBoard
     };
 
     private static IEnumerable<string> Strings(PEReader pe, MetadataReader reader, string ns, string typeName, string methodName)

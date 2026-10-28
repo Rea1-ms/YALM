@@ -209,7 +209,6 @@ namespace GHelper.Overlay
         private bool _showFps, _showTemp, _showFans, _showChart, _showPower, _showUsage, _showRam, _showBattery;
         private bool _onBattery;
         private int _overlayBattery = -1;
-        private readonly bool _isAlly;
         private bool _hidden;
         private int _shownPid;
         private bool _fgDesktop;
@@ -246,7 +245,6 @@ namespace GHelper.Overlay
         {
             _host = host;
             _readings = readings;
-            _isAlly = readings is null && AppConfig.IsAlly();
             Alpha = 255;
             _timer.Elapsed += (_, _) =>
             {
@@ -257,7 +255,7 @@ namespace GHelper.Overlay
 
         private void PostToHost(Action action)
         {
-            Form? host = _host ?? Program.settingsForm;
+            Form? host = _host;
             if (host is null || host.IsDisposed || !host.IsHandleCreated) return;
             try { host.BeginInvoke(action); }
             catch (InvalidOperationException) { }
@@ -464,89 +462,31 @@ namespace GHelper.Overlay
                 if (_hidden) return;
             }
 
-            if (_readings is not null)
+            if (_readings is null)
             {
-                OverlayReadings readings = _readings();
-                _cpuTempStr = "CPU:" + FmtTemp(readings.CpuTemperature ?? -1) + " ";
-                _gpuTempStr = "GPU:" + FmtTemp(readings.GpuTemperature ?? -1) + " ";
-                _cpuFanNum = FormatFan(readings.CpuFanRpm);
-                _gpuFanNum = FormatFan(readings.GpuFanRpm);
-                _cpuUsage = readings.CpuUsage;
-                _gpuUsage = readings.GpuUsage;
-                _onBattery = _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
-                float charge = SystemInformation.PowerStatus.BatteryLifePercent;
-                _batPercent = charge is >= 0 and <= 1 ? (int)Math.Round(charge * 100) : -1;
-                _batLevel = _batPercent >= 0 ? _batPercent + "%" : "--";
-                _batRate = "";
-                _batCharging = SystemInformation.PowerStatus.BatteryChargeStatus.HasFlag(BatteryChargeStatus.Charging);
+                // YALM supplies all telemetry through the current Mechrevo snapshot.
+                // The original ASUS sensor fallback is archived and is not compiled.
+                _cpuTempStr = "CPU:-- ";
+                _gpuTempStr = "GPU:-- ";
+                _cpuFanNum = _gpuFanNum = "--";
+                _cpuUsage = _gpuUsage = _vramUsage = _vramUsedMb = _ramUsage = _ramUsedMb = null;
                 Invalidate();
                 return;
             }
 
-            HardwareControl.ReadSensorsOverlay();
-
-            // gpuActive gates power, fan and chart history — when the GPU is disabled
-            // its sensors return stale non-zero values, so we zero them out explicitly.
-            double gpuTemp = D(HardwareControl.gpuTemp);
-            double cpuTemp = D(HardwareControl.cpuTemp);
-            bool gpuActive = gpuTemp > 0;
-
-            // Trailing space is the separator between temp and fan number
-            _gpuTempStr = "GPU:" + FmtTemp(gpuTemp) + " ";
-            _cpuTempStr = "CPU:" + FmtTemp(cpuTemp) + " ";
-            _gpuFanNum = FormatFan(HardwareControl.gpuFanRPM);
-            _cpuFanNum = FormatFan(HardwareControl.cpuFanRPM);
-            _gpuPow = HardwareControl.gpuPower is null ? "" : Math.Round(HardwareControl.gpuPower.Value, 1).ToString("F1") + "W";
-            _cpuPow = FmtPow(D(HardwareControl.cpuPower));
-
-            _cpuHistory[_historyHead] = (float)Math.Max(0, D(HardwareControl.cpuPower));
-            _gpuHistory[_historyHead] = gpuActive ? (float)Math.Max(0, D(HardwareControl.gpuPower)) : 0f;
-            _historyHead = (_historyHead + 1) % HistoryLength;
-
-            _cpuUsage = HardwareControl.cpuUsage;
-            _gpuUsage = gpuActive ? (HardwareControl.gpuUsage ?? 0) : null;
-            _vramUsage = gpuActive ? (HardwareControl.vramUsage ?? 0) : null;
-            _vramUsedMb = gpuActive ? (HardwareControl.vramUsedMb ?? 0) : null;
-            _ramUsage = HardwareControl.ramUsage;
-            _ramUsedMb = HardwareControl.ramUsedMb;
-
-            if (_showBattery)
-            {
-                bool onBattery = _isAlly || _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
-                if (onBattery != _onBattery)
-                {
-                    _onBattery = onBattery;
-                    ApplySensorFlags();
-
-                    Point center = new Point(Location.X + Width / 2, Location.Y + Height / 2);
-                    Screen screen = Screen.FromPoint(center);
-                    if (center.X > screen.Bounds.X + screen.Bounds.Width / 2)
-                    {
-                        int rightEdge = Location.X + Width;
-                        Invalidate();
-                        Location = new Point(rightEdge - Width, Location.Y);
-                    }
-                }
-
-                if (_onBattery)
-                {
-                    double level = HardwareControl.GetBatteryChargePercentage();
-                    _batPercent = (int)Math.Round(level);
-                    _batLevel = level > 0 ? _batPercent + "%" : "--";
-                    decimal rate = HardwareControl.batteryRate ?? 0;
-                    _batRate = rate == 0 ? "" : (rate > 0 ? "+" : "-") + Math.Abs(rate).ToString("F1");
-                    _batCharging = rate > 0;
-                }
-            }
-
-            if (_showNames)
-            {
-                if (_cpuShortName.Length == 0)
-                    _cpuShortName = ShortCpuName(PawnIO.CpuInfo.Name);
-                if (_gpuShortName.Length == 0)
-                    _gpuShortName = ShortGpuName(HardwareControl.GpuControl?.FullName);
-            }
-
+            OverlayReadings readings = _readings();
+            _cpuTempStr = "CPU:" + FmtTemp(readings.CpuTemperature ?? -1) + " ";
+            _gpuTempStr = "GPU:" + FmtTemp(readings.GpuTemperature ?? -1) + " ";
+            _cpuFanNum = FormatFan(readings.CpuFanRpm);
+            _gpuFanNum = FormatFan(readings.GpuFanRpm);
+            _cpuUsage = readings.CpuUsage;
+            _gpuUsage = readings.GpuUsage;
+            _onBattery = _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
+            float charge = SystemInformation.PowerStatus.BatteryLifePercent;
+            _batPercent = charge is >= 0 and <= 1 ? (int)Math.Round(charge * 100) : -1;
+            _batLevel = _batPercent >= 0 ? _batPercent + "%" : "--";
+            _batRate = "";
+            _batCharging = SystemInformation.PowerStatus.BatteryChargeStatus.HasFlag(BatteryChargeStatus.Charging);
             Invalidate();
         }
 
@@ -1064,12 +1004,7 @@ namespace GHelper.Overlay
         // Don't pull sensors for blocks that aren't drawn (power feeds both the power and chart blocks).
         private void ApplySensorFlags()
         {
-            if (_readings is not null) return;
-            HardwareControl.readFans   = _showFans;
-            HardwareControl.readUsage  = _showUsage;
-            HardwareControl.readMemory = _showRam;
-            HardwareControl.readPower  = _showPower || _showChart;
-            HardwareControl.readBattery = _showBattery && _onBattery;
+            // Telemetry is supplied by YALM's current platform snapshot.
         }
 
         // Started for the FPS block, or for Auto Show to detect a game even with FPS hidden. Only
@@ -1122,10 +1057,9 @@ namespace GHelper.Overlay
             _scalePercent = Math.Clamp(AppConfig.Get("overlay_scale_percent", 100), MinScalePercent, MaxScalePercent);
             ApplyColors();
             ApplyPreset(_mode);
-            _onBattery = _isAlly || _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
+            _onBattery = _overlayBattery == 1 || SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Online;
             ApplySensorFlags();
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-            if (_readings is null) HardwareControl.ResetCPUPowerCounter();
 
             _fps?.Dispose();
             _fps = null;
@@ -1156,14 +1090,6 @@ namespace GHelper.Overlay
             _active = false;
             if (_fgHook != IntPtr.Zero) { UnhookWinEvent(_fgHook); _fgHook = IntPtr.Zero; }
             _fgHookProc = null;
-            if (_readings is null)
-            {
-                HardwareControl.readUsage = false;
-                HardwareControl.readFans = false;
-                HardwareControl.readMemory = false;
-                HardwareControl.readPower = false;
-                HardwareControl.readBattery = false;
-            }
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _timer.Stop();
             _dragModeActive = false;
