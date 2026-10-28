@@ -12,6 +12,12 @@ public sealed record GcuConnectionOptions(string ClientId, string UserName, stri
     // Read-only capability supplied by the platform adapter, never inferred from a current mode.
     public bool? TurboSupported { get; init; }
 
+    // Protocol capabilities established by the platform adapter. These are
+    // separate from runtime status and cannot be granted by incoming messages.
+    public bool ModeControlSupported { get; init; } = true;
+    public bool CustomControlSupported { get; init; } = true;
+    public bool PeripheralControlSupported { get; init; } = true;
+
     // Avoid exposing credentials through record-generated logging.
     public override string ToString() => $"GcuConnectionOptions {{ ClientId = {ClientId}, Port = {Port} }}";
 }

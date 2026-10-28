@@ -11,6 +11,9 @@ public static class EcFanRegisters
     public const int FanSafetyFlags = 1957;
     public const int GenericThermalFlags = 1992;
 
+    public static IReadOnlyList<int> RpmReadAddresses { get; } =
+    [CpuFanRpmHigh, CpuFanRpmLow, GpuFanRpmHigh, GpuFanRpmLow];
+
     public static IReadOnlyList<int> AllReadAddresses { get; } =
     [
         CpuFanRpmHigh,

@@ -4,7 +4,7 @@ namespace YALM.Mechrevo;
 
 internal sealed partial class MechrevoForm : RForm
 {
-    private readonly MachineInfo _machine;
+    private MachineInfo _machine;
     private readonly bool _demo;
     private readonly bool _smokeTest;
     private readonly bool _startupTest;
@@ -12,7 +12,7 @@ internal sealed partial class MechrevoForm : RForm
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 5000 };
     private readonly System.Windows.Forms.Timer _ecRefreshTimer = new() { Interval = 1000 };
     private readonly System.Windows.Forms.Timer _smokeTimer = new() { Interval = 1500 };
-    private readonly EcFanReader _ecFanReader = new();
+    private EcFanReader _ecFanReader;
     private readonly Label _connectionStatus = TextLabel("尚未连接");
     private readonly Label _cpuValues = TextLabel("温度：未收到\n风扇：未收到");
     private readonly Label _gpuValues = TextLabel("温度：未收到\n风扇：未收到");
@@ -25,6 +25,10 @@ internal sealed partial class MechrevoForm : RForm
     private readonly Dictionary<PerformanceMode, RButton> _modeButtons = new();
     private GcuController? _controller;
     private GcuConnectionOptions? _connectionOptions;
+    private string? _connectionDiscoveryFailure;
+    private string? _loggedServiceState;
+    private string? _lastRefreshFailure;
+    private bool _diagnosticsStarted;
     private CustomModeForm? _customModeForm;
     private string? _machineBlockReason;
     private bool _connecting;
@@ -38,6 +42,7 @@ internal sealed partial class MechrevoForm : RForm
     public MechrevoForm(MachineInfo machine, bool demo = false, bool smokeTest = false, bool startupTest = false)
     {
         _machine = machine;
+        _ecFanReader = new EcFanReader(readProtection: machine.SupportsEcProtection);
         _demo = demo;
         _smokeTest = smokeTest;
         _startupTest = startupTest;
@@ -59,7 +64,6 @@ internal sealed partial class MechrevoForm : RForm
         InitTheme(true);
         InitializeTray();
         TopMost = !_demo && AppConfig.Is("topmost");
-        if (!_demo) LoadConnectionEnvironment();
         _machineBlockReason = _demo ? null : _machine.GetModeControlBlockReason();
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _ecRefreshTimer.Tick += async (_, _) => await RefreshEcAsync();
@@ -155,29 +159,15 @@ internal sealed partial class MechrevoForm : RForm
 
     private void LoadConnectionEnvironment()
     {
-        string? client = GcuEnvironment.Get("CLIENT_ID");
-        string? user = GcuEnvironment.Get("USERNAME");
-        string? password = GcuEnvironment.Get("PASSWORD");
-        string? portText = GcuEnvironment.Get("PORT");
-        int port = 13688;
-        _connectionOptions = null;
-        if (!string.IsNullOrWhiteSpace(portText) && (!int.TryParse(portText, out port) || port is < 1 or > 65535))
-        {
-            ShowActionStatus("环境变量中的端口无效，请修正后点击底部连接状态重试。");
-            return;
-        }
-        if (!string.IsNullOrWhiteSpace(client) && !string.IsNullOrWhiteSpace(user) && !string.IsNullOrEmpty(password))
-            _connectionOptions = new(client.Trim(), user.Trim(), password, port);
-        else _connectionOptions = GcuConnectionDiscovery.Find(_machine);
-        if (_connectionOptions is not null)
-            _connectionOptions = _connectionOptions with { TurboSupported = _machine.TurboSupported };
+        _connectionOptions = GcuConnectionDiscovery.Find(_machine, out _connectionDiscoveryFailure, Logger.WriteLine);
+        RenderConnectionStatus();
     }
 
     private async void OnShown(object? sender, EventArgs e)
     {
         StartTray();
         _refreshTimer.Start();
-        if (!_demo && _machine.SupportsModeControl) _ecRefreshTimer.Start();
+        if (!_demo && _machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
         if (_smokeTest || _startupTest) _smokeTimer.Start();
         if (_smokeTest)
         {
@@ -194,6 +184,13 @@ internal sealed partial class MechrevoForm : RForm
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
+        if (!_demo)
+        {
+            MechrevoDiagnostics.WriteStartup(_machine, DeviceDpi);
+            _diagnosticsStarted = true;
+            LoadConnectionEnvironment();
+            RenderSnapshot();
+        }
         PositionAtScreenCorner(Screen.PrimaryScreen ?? Screen.FromControl(this));
         RegisterOverlayHotkey();
     }
@@ -207,11 +204,11 @@ internal sealed partial class MechrevoForm : RForm
 
     private async Task ConnectAsync()
     {
-        if (_demo || _closing || _connecting || _switching || _keyboardBusy) return;
+        if (_demo || _closing || _connecting || _switching || _keyboardBusy || _customModeForm?.IsOperationPending == true) return;
         if (_connectionOptions is null) LoadConnectionEnvironment();
         if (_connectionOptions is null)
         {
-            ShowActionStatus("未找到可用的本机连接资料，请检查厂商服务或连接环境变量。");
+            ShowActionStatus(_connectionDiscoveryFailure ?? "未找到可用的本机连接资料，请检查厂商服务或连接环境变量。");
             return;
         }
         _connecting = true;
@@ -219,14 +216,21 @@ internal sealed partial class MechrevoForm : RForm
         RenderSnapshot();
         try
         {
+            // Re-identify on every new session; an installed worker or OEM configuration
+            // may have changed since startup. Never reuse a dynamic protocol grant.
+            _ecRefreshTimer.Stop();
+            if (_controller is not null) await _controller.DisconnectAsync();
+            _machine = await GcuPlatformDiscovery.DiscoverAsync(MachineInfo.Read(), Logger.WriteLine, _lifetime.Token);
+            _ecSnapshot = null;
+            _ecFanReader = new EcFanReader(readProtection: _machine.SupportsEcProtection);
+            _machineBlockReason = _machine.GetModeControlBlockReason();
+            if (_machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
+            LoadConnectionEnvironment();
+            if (_connectionOptions is null) return;
             if (_controller is null)
             {
-                _controller = new GcuController(new GcuMqttTransport(), readAcPower: MachineInfo.ReadAcPower);
+                _controller = new GcuController(new GcuMqttTransport(Logger.WriteLine), readAcPower: MachineInfo.ReadAcPower);
                 _controller.Changed += OnControllerChanged;
-            }
-            else
-            {
-                await _controller.DisconnectAsync();
             }
             await _controller.ConnectAsync(_connectionOptions, _lifetime.Token);
             if (_closing) return;
@@ -240,7 +244,7 @@ internal sealed partial class MechrevoForm : RForm
             if (!_closing)
             {
                 ShowActionStatus("连接失败：" + SafeMessage(ex.Message));
-                Logger.WriteLine("本机服务连接失败。");
+                Logger.WriteLine("本机服务连接或初始化失败；" + MechrevoDiagnostics.ExceptionSummary(ex));
             }
         }
         finally
@@ -261,12 +265,22 @@ internal sealed partial class MechrevoForm : RForm
             if (_closing) return;
             RenderSnapshot();
             if (_controller?.Snapshot.IsConnected == true)
+            {
                 await _controller.RefreshAsync(_lifetime.Token);
+                if (_lastRefreshFailure is not null) Logger.WriteLine("服务状态查询已恢复。");
+                _lastRefreshFailure = null;
+            }
         }
         catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
-            if (!_closing) ShowActionStatus("读取状态失败：" + SafeMessage(ex.Message));
+            if (!_closing)
+            {
+                ShowActionStatus("读取状态失败：" + SafeMessage(ex.Message));
+                string failure = MechrevoDiagnostics.ExceptionSummary(ex);
+                if (_lastRefreshFailure != failure) Logger.WriteLine("服务状态查询失败；" + failure);
+                _lastRefreshFailure = failure;
+            }
         }
         finally
         {
@@ -277,11 +291,13 @@ internal sealed partial class MechrevoForm : RForm
 
     private async Task RefreshEcAsync()
     {
-        if (_demo || !_machine.SupportsModeControl || _closing || _ecRefreshing) return;
+        if (_demo || !_machine.SupportsEcTelemetry || _closing || _ecRefreshing) return;
         _ecRefreshing = true;
+        MachineInfo readingMachine = _machine;
         try
         {
-            _ecSnapshot = await _ecFanReader.ReadAsync(_lifetime.Token);
+            EcFanSnapshot snapshot = await _ecFanReader.ReadAsync(_lifetime.Token);
+            if (ReferenceEquals(readingMachine, _machine)) _ecSnapshot = snapshot;
         }
         catch (OperationCanceledException) when (_closing || _lifetime.IsCancellationRequested) { }
         catch
@@ -349,7 +365,8 @@ internal sealed partial class MechrevoForm : RForm
             return;
         }
 
-        _customModeForm = new CustomModeForm(_controller, () => _ecSnapshot, _demo) { Owner = this };
+        _customModeForm = new CustomModeForm(_controller, () => _ecSnapshot, _demo,
+            () => _machine.GetCustomControlBlockReason()) { Owner = this };
         _customModeForm.FormClosed += (_, _) => _customModeForm = null;
         _customModeForm.Show(this);
     }
@@ -366,6 +383,7 @@ internal sealed partial class MechrevoForm : RForm
         if (_closing || IsDisposed) return;
         RenderKeyboard();
         RenderGpuMode();
+        LogServiceAvailability();
         if (_demo)
         {
             _cpuValues.Text = "CPU: 48 ℃  风扇: " + (_fanRpm ? "2100 RPM" : "35%");
@@ -393,7 +411,7 @@ internal sealed partial class MechrevoForm : RForm
             : connected && snapshot!.IsCpuFanFresh(now) ? snapshot.CpuFanRpm : null;
         int? gpuRpm = ecFresh ? _ecSnapshot!.GpuFanRpm
             : connected && snapshot!.IsGpuFanFresh(now) ? snapshot.GpuFanRpm : null;
-        bool bothRpmFresh = cpuRpm.HasValue && gpuRpm.HasValue;
+        bool bothRpmFresh = cpuRpm.HasValue && gpuRpm.HasValue && HasFreshActualRpm(now);
         string cpuFan = _fanRpm ? Value(cpuRpm, cpuRpm.HasValue, " RPM")
             : Value(snapshot?.CpuFanDuty, connected && snapshot!.IsCpuFanDutyFresh(now), "%");
         string gpuFan = _fanRpm ? Value(gpuRpm, gpuRpm.HasValue, " RPM")
@@ -437,11 +455,21 @@ internal sealed partial class MechrevoForm : RForm
         string connection = _demo ? "演示 · 未连接服务" : _connecting ? "正在处理连接…"
             : snapshot?.IsConnected == true ? "已连接本机服务"
             : !string.IsNullOrWhiteSpace(snapshot?.LastError) ? "连接不可用：" + SafeMessage(snapshot.LastError)
-            : "尚未连接";
+            : _connectionDiscoveryFailure ?? "尚未连接";
         _connectionStatus.Text = DateTimeOffset.UtcNow < _actionMessageUntil ? _actionMessage : connection;
         _connectionStatus.AccessibleName = _connectionStatus.Text;
         _keyboardTips.SetToolTip(_connectionStatus,
             string.Join("\n", new[] { connection, _controlMessage, _actionMessage }.Where(text => !string.IsNullOrWhiteSpace(text))));
+    }
+
+    private void LogServiceAvailability()
+    {
+        if (_demo || !_diagnosticsStarted) return;
+        GcuSnapshot snapshot = _controller?.Snapshot ?? new();
+        string state = $"连接={snapshot.IsConnected}；模式={snapshot.IsConnected && snapshot.IsStatusFresh()}；处理器温度={snapshot.IsConnected && snapshot.IsCpuTemperatureFresh()}；显卡温度={snapshot.IsConnected && snapshot.IsGpuTemperatureFresh()}；键盘={snapshot.IsConnected && snapshot.IsKeyboardFresh()}";
+        if (_loggedServiceState == state) return;
+        _loggedServiceState = state;
+        Logger.WriteLine("服务状态可用性：" + state);
     }
 
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -494,6 +522,9 @@ internal sealed partial class MechrevoForm : RForm
 
     private bool HasFreshActualRpm(DateTimeOffset now)
     {
+        if (!_machine.HasVerifiedBoard && _machine.SupportsModeControl &&
+            (_ecSnapshot?.IsFresh(now) != true || _ecSnapshot.GenericThermalProtect is null ||
+             _ecSnapshot.FanSafetyProtect is null)) return false;
         if (_ecSnapshot?.IsFresh(now) == true) return true;
         var snapshot = _controller?.Snapshot;
         return snapshot?.IsConnected == true && snapshot.IsCpuFanFresh(now) && snapshot.IsGpuFanFresh(now);

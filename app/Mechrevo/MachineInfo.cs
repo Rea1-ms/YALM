@@ -6,11 +6,21 @@ namespace YALM.Mechrevo;
 internal sealed record MachineInfo(string Manufacturer, string Model, string BiosVersion, string BaseboardProduct)
 {
     public bool? TurboSupported { get; init; }
-
-    public bool SupportsModeControl =>
-        string.Equals(Manufacturer.Trim(), "MECHREVO", StringComparison.OrdinalIgnoreCase) &&
+    public string? ProtocolProfile { get; init; }
+    public string? ProtocolWorkerHash { get; init; }
+    public int? OemAppType { get; init; }
+    public bool IsMechrevo => string.Equals(Manufacturer.Trim(), "MECHREVO", StringComparison.OrdinalIgnoreCase);
+    public bool HasVerifiedBoard => IsMechrevo &&
         (string.Equals(BaseboardProduct.Trim(), "GM6PX0X", StringComparison.OrdinalIgnoreCase) ||
-         Model.Contains("GM6PX0X", StringComparison.OrdinalIgnoreCase));
+         string.Equals(Model.Trim(), "GM6PX0X", StringComparison.OrdinalIgnoreCase));
+    public bool SupportsModeControl => HasVerifiedBoard || IsMechrevo && ProtocolProfile == "GCU-RamFan1.5";
+    // Legacy observations never grant control: no reviewed protection telemetry is available.
+    public bool SupportsEcTelemetry => SupportsModeControl || IsMechrevo && ProtocolProfile == "GCU-Legacy-ReadOnly";
+    public bool SupportsEcProtection => SupportsModeControl;
+    public bool SupportsCustomControl => HasVerifiedBoard;
+    public bool SupportsPeripheralControl => HasVerifiedBoard;
+    // The extended diagnostic register/curve dump has only been reviewed on this board.
+    public bool SupportsExtendedEcDiagnostics => HasVerifiedBoard;
 
     public string DisplayName => string.Join(" ", new[] { Manufacturer, Model }
         .Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -33,13 +43,27 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
                 bios?.GetValue("BIOSVersion")?.ToString() ?? string.Empty,
                 bios?.GetValue("BaseBoardProduct")?.ToString() ?? string.Empty)
             {
-                TurboSupported = ReadTurboCapability()
+                TurboSupported = ReadTurboCapability(),
+                OemAppType = ReadOemAppType()
             };
         }
         catch
         {
             return new MachineInfo(string.Empty, string.Empty, string.Empty, string.Empty);
         }
+    }
+
+    private static int? ReadOemAppType()
+    {
+        try
+        {
+            using var registry = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var settings = registry.OpenSubKey(@"SOFTWARE\OEM\GamingCenter2", false);
+            // New protocol grants require an explicit DWORD; unknown configuration stays read-only.
+            object? value = settings?.GetValue("AppType");
+            return value is int number && number is 1 or 2 or 3 ? number : null;
+        }
+        catch { return null; }
     }
 
     private static bool? ReadTurboCapability()
@@ -78,7 +102,7 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
     public string? GetModeControlBlockReason()
     {
         if (!SupportsModeControl)
-            return "此机型尚未验证，当前仅查看状态。";
+            return "尚未识别到已适配的硬件协议，当前仅查看状态。";
 
         try
         {
@@ -115,6 +139,9 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
             return "无法检查其他控制界面，当前仅查看状态。";
         }
     }
+
+    public string? GetCustomControlBlockReason() => !SupportsCustomControl
+        ? "此协议尚未适配自定义设置，当前仅查看。" : GetModeControlBlockReason();
 
     private static bool IsCompetingControlApp(string name) =>
         name.Equals("L-Mechrevo", StringComparison.OrdinalIgnoreCase) ||

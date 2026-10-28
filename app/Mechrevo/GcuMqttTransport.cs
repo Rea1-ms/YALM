@@ -15,6 +15,9 @@ internal sealed class GcuMqttTransport : IGcuTransport
     private readonly MqttClientFactory _factory = new();
     private IMqttClient? _client;
     private int _disconnecting;
+    private readonly Action<string>? _log;
+
+    public GcuMqttTransport(Action<string>? log = null) => _log = log;
 
     public bool IsConnected => _client?.IsConnected == true;
     public event Action<string, string>? MessageReceived;
@@ -51,15 +54,20 @@ internal sealed class GcuMqttTransport : IGcuTransport
             }
             return Task.CompletedTask;
         };
-        client.DisconnectedAsync += _ =>
+        client.DisconnectedAsync += args =>
         {
             if (ReferenceEquals(_client, client) && Interlocked.CompareExchange(ref _disconnecting, 0, 0) == 0)
+            {
+                _log?.Invoke($"消息服务连接结束：曾连接={args.ClientWasConnected}；原因代码={args.Reason}；连接响应={args.ConnectResult?.ResultCode.ToString() ?? "无"}" +
+                    (args.Exception is null ? "" : "；" + MechrevoDiagnostics.ExceptionSummary(args.Exception)));
                 Disconnected?.Invoke();
+            }
             return Task.CompletedTask;
         };
 
         try
         {
+            _log?.Invoke($"连接消息服务：127.0.0.1:{options.Port}；协议=MQTT 3.1.1；清理会话=True；超时=5 秒");
             var mqttOptions = new MqttClientOptionsBuilder()
                 .WithTcpServer("127.0.0.1", options.Port)
                 .WithCredentials(options.UserName, options.Password)
@@ -70,11 +78,13 @@ internal sealed class GcuMqttTransport : IGcuTransport
                 .WithTimeout(TimeSpan.FromSeconds(5))
                 .Build();
             var result = await client.ConnectAsync(mqttOptions, ct).ConfigureAwait(false);
+            _log?.Invoke($"消息服务连接响应：{result.ResultCode}；连接状态={client.IsConnected}");
             if (result.ResultCode != MqttClientConnectResultCode.Success || !client.IsConnected)
                 throw new InvalidOperationException("厂商服务拒绝了连接。");
         }
-        catch
+        catch (Exception exception)
         {
+            _log?.Invoke("消息服务连接失败；" + MechrevoDiagnostics.ExceptionSummary(exception));
             _client = null;
             client.Dispose();
             throw;
@@ -90,7 +100,17 @@ internal sealed class GcuMqttTransport : IGcuTransport
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
             .Build()).ToList();
         if (filters.Count == 0) throw new ArgumentException("订阅主题不能为空。", nameof(topics));
-        var result = await client.SubscribeAsync(new MqttClientSubscribeOptions { TopicFilters = filters }, ct).ConfigureAwait(false);
+        MqttClientSubscribeResult result;
+        try
+        {
+            result = await client.SubscribeAsync(new MqttClientSubscribeOptions { TopicFilters = filters }, ct).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _log?.Invoke("消息服务状态订阅失败；" + MechrevoDiagnostics.ExceptionSummary(exception));
+            throw;
+        }
+        _log?.Invoke($"消息服务状态订阅：请求={filters.Count}；响应={result.Items.Count}；结果={string.Join(",", result.Items.Select(item => item.ResultCode).Distinct())}");
         if (result.Items.Count == filters.Count && result.Items.All(item => item.ResultCode is MqttClientSubscribeResultCode.GrantedQoS0 or MqttClientSubscribeResultCode.GrantedQoS1 or MqttClientSubscribeResultCode.GrantedQoS2)) return;
         throw new InvalidOperationException("厂商服务拒绝了状态订阅。");
     }

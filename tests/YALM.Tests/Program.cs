@@ -13,6 +13,10 @@ internal static partial class Program
     {
         var tests = new (string Name, Func<Task> Run)[]
         {
+            ("unreviewed platforms reject all writes", PlatformPolicyRejectsWritesDespiteFreshStatus),
+            ("read-only platforms retain status refresh", PlatformPolicyKeepsReadOnlyRefreshes),
+            ("platform permissions are independent", PlatformPolicyCapabilitiesRemainIndependent),
+            ("reconnection replaces platform permissions", PlatformPolicyReplacesPermissionsOnReconnect),
             ("invalid readings never become zero", InvalidReadingsNeverBecomeZero),
             ("fields expire independently", FieldsExpireIndependently),
             ("EC fan readings decode RPM and protection", EcFanReadingsDecode),

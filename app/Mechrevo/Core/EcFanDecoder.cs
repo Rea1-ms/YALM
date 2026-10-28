@@ -9,10 +9,11 @@ public static class EcFanDecoder
 
     public static EcFanSnapshot Decode(
         IReadOnlyDictionary<int, byte> registers,
-        DateTimeOffset observedAt)
+        DateTimeOffset observedAt,
+        bool readProtection = true)
     {
         ArgumentNullException.ThrowIfNull(registers);
-        foreach (int address in RequiredAddresses)
+        foreach (int address in readProtection ? EcFanRegisters.AllReadAddresses : EcFanRegisters.RpmReadAddresses)
         {
             if (!registers.TryGetValue(address, out byte value))
                 return Failure($"EC 风扇数据不完整（缺少地址 {address}）。", observedAt);
@@ -23,27 +24,15 @@ public static class EcFanDecoder
         if (cpuRpm > MaximumReasonableRpm || gpuRpm > MaximumReasonableRpm)
             return Failure("EC 风扇转速超出合理范围。", observedAt);
 
-        byte safetyFlags = registers[EcFanRegisters.FanSafetyFlags];
-        byte thermalFlags = registers[EcFanRegisters.GenericThermalFlags];
         return new EcFanSnapshot
         {
             CpuFanRpm = cpuRpm,
             GpuFanRpm = gpuRpm,
-            FanSafetyProtect = (safetyFlags & (1 << 3)) != 0,
-            GenericThermalProtect = (thermalFlags & (1 << 4)) != 0,
+            FanSafetyProtect = readProtection ? (registers[EcFanRegisters.FanSafetyFlags] & (1 << 3)) != 0 : null,
+            GenericThermalProtect = readProtection ? (registers[EcFanRegisters.GenericThermalFlags] & (1 << 4)) != 0 : null,
             UpdatedAt = observedAt
         };
     }
-
-    private static readonly int[] RequiredAddresses =
-    [
-        EcFanRegisters.CpuFanRpmHigh,
-        EcFanRegisters.CpuFanRpmLow,
-        EcFanRegisters.GpuFanRpmHigh,
-        EcFanRegisters.GpuFanRpmLow,
-        EcFanRegisters.FanSafetyFlags,
-        EcFanRegisters.GenericThermalFlags
-    ];
 
     private static int Word(byte high, byte low) => high * 256 + low;
 

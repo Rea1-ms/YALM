@@ -15,6 +15,7 @@ internal sealed partial class CustomModeForm : RForm
     private readonly GcuController _controller;
     private readonly bool _demo;
     private readonly Func<EcFanSnapshot?> _ecSnapshot;
+    private readonly Func<string?>? _controlBlockReason;
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 5000 };
     private readonly RComboBox _profile = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly Panel _pages = new() { Dock = DockStyle.Fill };
@@ -43,12 +44,14 @@ internal sealed partial class CustomModeForm : RForm
 
     private GcuSnapshot Snapshot => _demo ? DemoSnapshot() : _controller.Snapshot;
 
-    public CustomModeForm(GcuController? controller, Func<EcFanSnapshot?> ecSnapshot, bool demo = false)
+    public CustomModeForm(GcuController? controller, Func<EcFanSnapshot?> ecSnapshot, bool demo = false,
+        Func<string?>? controlBlockReason = null)
     {
         if (!demo) ArgumentNullException.ThrowIfNull(controller);
         _controller = controller!;
         _demo = demo;
         _ecSnapshot = ecSnapshot ?? throw new ArgumentNullException(nameof(ecSnapshot));
+        _controlBlockReason = controlBlockReason;
 
         Text = "YALM · 风扇与功耗";
         Icon = MechrevoUi.AppIcon;
@@ -126,9 +129,10 @@ internal sealed partial class CustomModeForm : RForm
         bool requireCustomMode = true)
     {
         if (_demo || _busy || _closing) return;
-        if (!CanWrite(requireCustomMode))
+        string? blockReason = GetWriteBlockReason(requireCustomMode);
+        if (blockReason is not null)
         {
-            _status.Text = "当前状态不允许写入：请连接服务、切换到自定义模式，并等待新鲜状态。";
+            _status.Text = blockReason;
             return;
         }
         _busy = true;
@@ -161,15 +165,20 @@ internal sealed partial class CustomModeForm : RForm
         }
         await RunAsync("正在写入风扇曲线…", () => _controller.SetFanCurveAsync(target, duties, _lifetime.Token));
     }
-    private bool CanWrite(bool requireCustomMode = true)
+    private bool CanWrite(bool requireCustomMode = true) => GetWriteBlockReason(requireCustomMode) is null;
+
+    private string? GetWriteBlockReason(bool requireCustomMode = true)
     {
-        if (_demo) return false;
+        if (_demo) return "演示仅供预览，不能修改硬件设置。";
+        if (_controlBlockReason?.Invoke() is { } blockReason) return blockReason;
         GcuSnapshot snapshot = Snapshot;
         if (!snapshot.IsConnected || (requireCustomMode && snapshot.Mode != 3) ||
             !snapshot.IsCustomSettingsFresh() || !snapshot.IsFanTableFresh())
-            return false;
+            return "当前状态不允许写入：请连接服务、切换到自定义模式，并等待新鲜状态。";
         EcFanSnapshot? ec = _ecSnapshot();
-        return ec is not { GenericThermalProtect: true } && ec?.IsFresh() != false;
+        if (ec is { GenericThermalProtect: true }) return "通用热保护已触发，暂时不能修改自定义设置。";
+        if (ec?.IsFresh() == false) return "硬件遥测已过期，请等待新鲜状态后再修改自定义设置。";
+        return null;
     }
 
     private void RenderSnapshot(bool loadEditors)
@@ -182,7 +191,8 @@ internal sealed partial class CustomModeForm : RForm
         bool customFresh = connected && snapshot.IsCustomSettingsFresh();
         bool mode3 = snapshot.Mode == 3;
         bool fanTableFresh = connected && snapshot.IsFanTableFresh();
-        bool canWrite = CanWrite() && !_busy;
+        bool canActivateProfile = CanWrite(requireCustomMode: false) && !_busy;
+        bool canWrite = canActivateProfile && mode3;
         EcFanSnapshot? ec = _ecSnapshot();
         int? currentProfile = settings?.ProfileIndex;
 
@@ -194,9 +204,9 @@ internal sealed partial class CustomModeForm : RForm
             _profile.SelectedIndex = Math.Clamp(profile, 0, _profile.Items.Count - 1);
             _displayedProfile = profile;
         }
-        _activateProfile.Enabled = !_demo && connected && !_busy;
+        _activateProfile.Enabled = canActivateProfile;
         _refresh.Enabled = connected && !_busy;
-        _profile.Enabled = !_demo && connected && !_busy;
+        _profile.Enabled = canActivateProfile;
         _fanBoost.Enabled = canWrite;
         _fanBoost.Activated = customFresh && settings?.FanBoostEnabled == true;
         _fanBoost.Text = "风扇增强：" + State(settings?.FanBoostEnabled, customFresh);

@@ -18,6 +18,11 @@ internal static partial class Program
             Application.SetHighDpiMode(args.Contains("--96") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            Logger.appPath = Path.GetFullPath(".cache/service-logging-20261026/logs");
+            Logger.logFile = Path.Combine(Logger.appPath, "log.txt");
+            CheckDiagnostics();
+            CheckBridgePackages(args);
+            CheckPlatforms(args);
             CheckMenuSafety();
             CheckQuickSwitches(args.Contains("--render"));
             CheckTrayLifecycle();

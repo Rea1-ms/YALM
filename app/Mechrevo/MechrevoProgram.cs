@@ -86,7 +86,8 @@ internal static class MechrevoProgram
         {
             using var activationSignal = new EventWaitHandle(false, EventResetMode.AutoReset,
                 demo ? ActivationEvent + ".Demo" : ActivationEvent);
-            using var form = new MechrevoForm(MachineInfo.Read(), demo, smokeTest, startupTest);
+            MachineInfo machine = MachineInfo.Read();
+            using var form = new MechrevoForm(machine, demo, smokeTest, startupTest);
             form.SetActivationSignal(activationSignal);
             Application.Run(form);
             return 0;

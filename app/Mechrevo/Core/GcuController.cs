@@ -23,6 +23,9 @@ public sealed class GcuController : IAsyncDisposable
     private long _modeVersion;
     private long _customSettingsVersion;
     private long _fanTableVersion;
+    private bool _modeControlSupported = true;
+    private bool _customControlSupported = true;
+    private bool _peripheralControlSupported = true;
     private bool _disposed;
 
     public GcuController(IGcuTransport transport, TimeProvider? timeProvider = null,
@@ -66,6 +69,9 @@ public sealed class GcuController : IAsyncDisposable
                 linked.Token.ThrowIfCancellationRequested();
                 lock (_sync)
                 {
+                    _modeControlSupported = options.ModeControlSupported;
+                    _customControlSupported = options.CustomControlSupported;
+                    _peripheralControlSupported = options.PeripheralControlSupported;
                     _snapshot = new GcuSnapshot
                     {
                         IsConnected = _transport.IsConnected,
@@ -122,7 +128,8 @@ public sealed class GcuController : IAsyncDisposable
             requireCustomSettings: true,
             requireFanTable: true,
             success: "自定义设置和两路曲线已读取。",
-            ct: ct).ConfigureAwait(false);
+            ct: ct,
+            queryOnly: true).ConfigureAwait(false);
     }
 
     public async Task<GcuWriteResult> SetCustomProfileAsync(int profileIndex, CancellationToken ct = default)
@@ -264,6 +271,8 @@ public sealed class GcuController : IAsyncDisposable
         {
             if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
+            if (!queryOnly && !_peripheralControlSupported)
+                return new(GcuWriteStatus.Rejected, "此服务协议尚未适配键盘和设备设置写入。");
             if (canPublish is not null && !canPublish(Snapshot))
                 return new(GcuWriteStatus.Rejected, "设置状态已变化或过期，请重新读取后再应用。");
             using var linked = LinkedSession(ct);
@@ -408,6 +417,8 @@ public sealed class GcuController : IAsyncDisposable
         {
             if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
                 return new(ModeSwitchStatus.Disconnected, "尚未连接厂商服务。");
+            if (!_modeControlSupported)
+                return new(ModeSwitchStatus.Rejected, "此服务协议尚未适配该性能模式。");
             ReadPlatformPower();
             GcuSnapshot before = Snapshot;
             if (!before.CanSwitchMode(mode, _time.GetUtcNow()))
@@ -497,7 +508,8 @@ public sealed class GcuController : IAsyncDisposable
         bool requireCustomSettings = false,
         bool requireFanTable = false,
         string success = "服务已回读目标状态。",
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool queryOnly = false)
     {
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
             return new(GcuWriteStatus.Busy, "上一项操作尚未完成。");
@@ -505,6 +517,8 @@ public sealed class GcuController : IAsyncDisposable
         {
             if (_disposed || !_transport.IsConnected || !Snapshot.IsConnected)
                 return new(GcuWriteStatus.Disconnected, "尚未连接厂商服务。");
+            if (!queryOnly && !_customControlSupported)
+                return new(GcuWriteStatus.Rejected, "此服务协议尚未适配自定义档位、功耗和风扇曲线写入。");
 
             long modeBaseline;
             long customBaseline;

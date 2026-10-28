@@ -59,20 +59,26 @@ internal static class MechrevoProbe
         if (!Path.IsPathFullyQualified(outputPath)) return 2;
         if (captureSeconds is < 5 or > 120) return 2;
 
-        MachineInfo machine = MachineInfo.Read();
-        GcuConnectionOptions? options = GcuConnectionDiscovery.Find(machine);
+        MachineInfo machine = await GcuPlatformDiscovery.DiscoverAsync(MachineInfo.Read(), Logger.WriteLine);
+        GcuConnectionOptions? options = GcuConnectionDiscovery.Find(machine, out string? discoveryFailure, Logger.WriteLine);
         var samples = new List<object>();
         var curves = new List<object>();
         var frames = new ConcurrentDictionary<string, JsonElement>();
-        var ecReader = new EcFanReader();
+        // These registers are specific to the verified EC layout. A working
+        // service connection does not establish a compatible hardware map.
+        bool ecSupported = machine.SupportsEcTelemetry;
+        bool extendedEcSupported = machine.SupportsExtendedEcDiagnostics;
+        EcFanReader? ecReader = ecSupported ? new EcFanReader(readProtection: machine.SupportsEcProtection) : null;
         string? error = null;
         bool complete = false;
+        bool serviceComplete = false;
+        bool ecComplete = false;
         int sampleCount = 0;
-        if (options is null) error = "未能自动读取本机原版服务连接信息。";
+        if (options is null) error = discoveryFailure ?? "未能自动读取本机原版服务连接信息。";
         else
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(captureSeconds + 45));
-            var transport = new GcuMqttTransport();
+            var transport = new GcuMqttTransport(Logger.WriteLine);
             transport.MessageReceived += (topic, payload) =>
             {
                 // Only explicit hardware/status topics are retained.
@@ -90,7 +96,8 @@ internal static class MechrevoProbe
                 await transport.SubscribeAsync(AdditionalTopics, timeout.Token);
                 await RequestExtendedStatusAsync(transport, timeout.Token);
                 await Task.Delay(TimeSpan.FromMilliseconds(350), timeout.Token);
-                curves.Add(await ReadCurveSnapshotAsync("initial", ecReader, timeout.Token));
+                if (ecReader is not null && extendedEcSupported)
+                    curves.Add(await ReadCurveSnapshotAsync("initial", ecReader, timeout.Token));
 
                 var clock = Stopwatch.StartNew();
                 do
@@ -98,20 +105,31 @@ internal static class MechrevoProbe
                     await RequestExtendedStatusAsync(transport, timeout.Token);
                     await Task.Delay(TimeSpan.FromMilliseconds(250), timeout.Token);
 
-                    EcRegisterSnapshot registers = await ecReader.ReadRegistersAsync(
-                        EcFanRegisters.AllReadAddresses.Concat(CoreRegisterAddresses),
-                        timeout.Token);
-                    EcFanSnapshot ecFan = registers.LastError is null
-                        ? EcFanDecoder.Decode(registers.Registers, registers.UpdatedAt ?? DateTimeOffset.UtcNow)
-                        : new EcFanSnapshot
-                        {
-                            ErrorCode = registers.ErrorCode,
-                            LastError = registers.LastError,
-                            UpdatedAt = registers.UpdatedAt
-                        };
+                    EcRegisterSnapshot? registers = null;
+                    EcFanSnapshot? ecFan = null;
+                    if (ecReader is not null)
+                    {
+                        registers = await ecReader.ReadRegistersAsync(
+                            extendedEcSupported ? ecReader.ReadAddresses.Concat(CoreRegisterAddresses)
+                                : ecReader.ReadAddresses,
+                            timeout.Token);
+                        ecFan = registers.LastError is null
+                            ? EcFanDecoder.Decode(registers.Registers, registers.UpdatedAt ?? DateTimeOffset.UtcNow,
+                                machine.SupportsEcProtection)
+                            : new EcFanSnapshot
+                            {
+                                ErrorCode = registers.ErrorCode,
+                                LastError = registers.LastError,
+                                UpdatedAt = registers.UpdatedAt
+                            };
+                    }
                     GcuSnapshot snapshot = controller.Snapshot;
-                    bool sampleComplete = snapshot.IsStatusFresh() && snapshot.IsFanFresh() && ecFan.IsFresh();
+                    bool sampleServiceComplete = snapshot.IsStatusFresh() && snapshot.IsFanFresh();
+                    bool sampleEcComplete = ecFan?.IsFresh() == true;
+                    bool sampleComplete = sampleServiceComplete && (!ecSupported || sampleEcComplete);
                     complete |= sampleComplete;
+                    serviceComplete |= sampleServiceComplete;
+                    ecComplete |= sampleEcComplete;
                     sampleCount++;
                     samples.Add(new
                     {
@@ -119,10 +137,12 @@ internal static class MechrevoProbe
                         CapturedAt = DateTimeOffset.Now,
                         ElapsedSeconds = Math.Round(clock.Elapsed.TotalSeconds, 3),
                         Complete = sampleComplete,
+                        ServiceComplete = sampleServiceComplete,
+                        EcComplete = ecSupported ? (bool?)sampleEcComplete : null,
                         Service = snapshot,
                         EcFan = ecFan,
                         DisplayRoute = GpuRouteReader.Read(),
-                        EcRegisters = registers.Registers.ToDictionary(
+                        EcRegisters = registers?.Registers.ToDictionary(
                             pair => $"0x{pair.Key:X4}",
                             pair => pair.Value),
                         Frames = SnapshotFrames(frames)
@@ -134,7 +154,8 @@ internal static class MechrevoProbe
                 }
                 while (clock.Elapsed < TimeSpan.FromSeconds(captureSeconds));
 
-                curves.Add(await ReadCurveSnapshotAsync("final", ecReader, timeout.Token));
+                if (ecReader is not null && extendedEcSupported)
+                    curves.Add(await ReadCurveSnapshotAsync("final", ecReader, timeout.Token));
             }
             catch (Exception exception)
             {
@@ -149,7 +170,14 @@ internal static class MechrevoProbe
             SampleIntervalSeconds = 3,
             Machine = machine,
             ConnectionDiscovered = options is not null,
+            TelemetryScope = ecSupported ? "ServiceAndEc" : "ServiceOnly",
+            EcTelemetrySupported = ecSupported,
+            EcProtectionSupported = machine.SupportsEcProtection,
+            ExtendedEcDiagnosticsSupported = extendedEcSupported,
+            EcTelemetryStatus = ecSupported ? "使用已核对的硬件寄存器映射。" : "未识别到兼容的硬件寄存器映射；仅采集厂商服务状态，不读取转速与曲线寄存器。",
             CompleteTelemetryReceived = complete,
+            CompleteServiceTelemetryReceived = serviceComplete,
+            CompleteEcTelemetryReceived = ecSupported ? (bool?)ecComplete : null,
             Error = error,
             Samples = samples,
             Curves = curves,

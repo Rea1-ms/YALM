@@ -74,7 +74,7 @@ internal sealed partial class MechrevoForm
         bool supported = snapshot?.GpuSwitchSupported == true && snapshot.IsGpuSwitchSupportFresh(now);
         GpuDisplayRoute? target = _demo ? GpuDisplayRoute.Direct : targetFresh ? snapshot!.GpuTarget : null;
         bool available = !_demo && !_startupTest && !_closing && !_connecting && !_switching && !_keyboardBusy &&
-            _machineBlockReason is null && _machine.SupportsModeControl && supported && targetFresh && routeFresh &&
+            _machineBlockReason is null && _machine.SupportsPeripheralControl && supported && targetFresh && routeFresh &&
             actual is GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct;
         foreach (var (route, button) in _gpuModeButtons)
         {
@@ -99,7 +99,7 @@ internal sealed partial class MechrevoForm
         if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
         _machineBlockReason = _machine.GetModeControlBlockReason();
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (!_machine.SupportsModeControl || _machineBlockReason is not null ||
+        if (!_machine.SupportsPeripheralControl || _machineBlockReason is not null ||
             _gpuRoute?.IsFresh(now) != true || _gpuRoute.Route is not (GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct) ||
             !_controller.Snapshot.CanSetGpuTarget(target, now))
         {

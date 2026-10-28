@@ -69,7 +69,7 @@ internal sealed partial class MechrevoForm
             AddRow(root, other);
             foreach (GcuQuickSettingDefinition definition in GcuQuickSettings.Definitions.Where(item => item.Setting != GcuQuickSetting.WinLock))
             {
-                var check = new CheckBox
+                var check = new QuickSettingCheckBox
                 {
                     Text = definition.Title, AutoSize = true, AutoCheck = false, ThreeState = true,
                     Margin = new Padding(4, 4, 4, 4), AccessibleName = definition.Title
@@ -130,12 +130,14 @@ internal sealed partial class MechrevoForm
                 GcuQuickSettingState state = snapshot.QuickSetting(setting);
                 bool fresh = snapshot.IsConnected && state.IsFresh();
                 check.CheckState = !fresh ? CheckState.Indeterminate : state.Enabled == true ? CheckState.Checked : CheckState.Unchecked;
-                check.Enabled = fresh && idle && !_main._demo;
+                check.Enabled = fresh && idle && !_main._demo && _main._machine.SupportsPeripheralControl &&
+                    _main._machineBlockReason is null;
                 check.AccessibleName = check.Text + "：" + (!fresh ? "未收到" : state.Enabled == true ? "开启" : "关闭");
             }
             _rendering = false;
             _brightness.AccessibleName = available ? $"背光亮度：{_brightness.Value} / 4" : "背光亮度：未收到";
-            _brightness.Enabled = available && idle && snapshot.Keyboard?.Power != false;
+            _brightness.Enabled = available && idle && snapshot.Keyboard?.Power != false &&
+                (_main._demo || _main._machine.SupportsPeripheralControl && _main._machineBlockReason is null);
             if (!available) _brightnessDirty = false;
         }
 

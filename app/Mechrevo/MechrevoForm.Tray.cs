@@ -187,7 +187,7 @@ internal sealed partial class MechrevoForm
         GcuSnapshot? snapshot = _controller?.Snapshot;
         return !_demo && !_startupTest && !_closing && !_connecting && !_switching && !_keyboardBusy &&
             _customModeForm?.IsOperationPending != true && _machineBlockReason is null &&
-            _machine.SupportsModeControl && HasFreshActualRpm(now) &&
+            _machine.SupportsCustomControl && HasFreshActualRpm(now) &&
             (_ecSnapshot is null || _ecSnapshot.IsFresh(now) && _ecSnapshot.GenericThermalProtect != true) &&
             snapshot?.IsConnected == true && snapshot.IsStatusFresh(now) && snapshot.Mode == 3 &&
             snapshot.IsCustomSettingsFresh(now) && snapshot.IsFanTableFresh(now) &&

@@ -191,7 +191,8 @@ internal sealed partial class MechrevoForm
     {
         GcuSnapshot snapshot = KeyboardSnapshot;
         bool fresh = snapshot.IsKeyboardFresh();
-        bool available = !_startupTest && !_keyboardBusy && !_connecting && !_switching;
+        bool available = !_startupTest && !_keyboardBusy && !_connecting && !_switching &&
+            (_demo || _machine.SupportsPeripheralControl && _machineBlockReason is null);
         _fnLock.Enabled = available && !_demo && snapshot.IsFnLockFresh();
         _fnLock.Activated = snapshot.IsFnLockFresh() && snapshot.FnLocked == true;
         _fnLock.BackColor = _fnLock.Activated ? colorStandard : buttonSecond;
@@ -268,6 +269,18 @@ internal sealed partial class MechrevoForm
     private async Task RunKeyboardAsync(Func<Task<GcuWriteResult>> operation)
     {
         if (_demo || _startupTest || _closing || _keyboardBusy) return;
+        _machineBlockReason = _machine.GetModeControlBlockReason();
+        if (!_machine.SupportsPeripheralControl)
+        {
+            ShowActionStatus("此协议尚未适配键盘与快捷设置，当前仅查看。");
+            return;
+        }
+        if (_machineBlockReason is not null)
+        {
+            ShowActionStatus(_machineBlockReason);
+            RenderSnapshot();
+            return;
+        }
         _keyboardBusy = true;
         ShowActionStatus("正在应用设置…");
         RenderSnapshot();

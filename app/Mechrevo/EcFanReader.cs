@@ -17,10 +17,13 @@ public sealed class EcFanReader
 
     private readonly object _sync = new();
     private readonly TimeProvider _time;
+    private readonly bool _readProtection;
+    public IReadOnlyList<int> ReadAddresses => _readProtection ? EcFanRegisters.AllReadAddresses : EcFanRegisters.RpmReadAddresses;
 
-    public EcFanReader(TimeProvider? timeProvider = null)
+    public EcFanReader(TimeProvider? timeProvider = null, bool readProtection = true)
     {
         _time = timeProvider ?? TimeProvider.System;
+        _readProtection = readProtection;
     }
 
     public Task<EcFanSnapshot> ReadAsync(CancellationToken ct = default) =>
@@ -45,11 +48,11 @@ public sealed class EcFanReader
 
     private EcFanSnapshot Read(CancellationToken ct)
     {
-        EcRegisterSnapshot snapshot = ReadRegisters(EcFanRegisters.AllReadAddresses, ct);
-        if (snapshot.LastError is not null || !snapshot.IsComplete(EcFanRegisters.AllReadAddresses))
+        EcRegisterSnapshot snapshot = ReadRegisters(ReadAddresses, ct);
+        if (snapshot.LastError is not null || !snapshot.IsComplete(ReadAddresses))
             return ReadFailure(snapshot.ErrorCode ?? 13, snapshot.UpdatedAt ?? _time.GetUtcNow());
 
-        return EcFanDecoder.Decode(snapshot.Registers, snapshot.UpdatedAt ?? _time.GetUtcNow());
+        return EcFanDecoder.Decode(snapshot.Registers, snapshot.UpdatedAt ?? _time.GetUtcNow(), _readProtection);
     }
 
     private EcRegisterSnapshot ReadRegisters(IReadOnlyList<int> addresses, CancellationToken ct)
