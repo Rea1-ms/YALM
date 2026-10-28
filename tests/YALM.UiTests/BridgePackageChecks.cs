@@ -38,6 +38,7 @@ internal static partial class Program
             int supported = 0;
             int rejected = 0;
             int recovered = 0;
+            int genericAccepted = 0;
 
             foreach (BridgeFixture fixture in fixtures!)
             {
@@ -104,15 +105,22 @@ internal static partial class Program
                     logs.Clear();
                     object?[] modifiedArgs = [machine, modifiedPath, testPort, null, new Action<string>(logs.Add)];
                     var modifiedResult = (GcuConnectionOptions?)read.Invoke(null, modifiedArgs);
-                    BridgeRequire(modifiedResult is not null || modifiedArgs[3] is string,
-                        $"Bridge {hash}: a modified component must either pass the generic parser or explain its rejection.");
+                    bool protectedImage = (bool)isProtected.Invoke(null, [hash])!;
+                    BridgeRequire(protectedImage ? modifiedResult is null && modifiedArgs[3] is string
+                        : modifiedResult is not null && modifiedArgs[3] is null,
+                        $"Bridge {hash}: a plain unknown image must parse; protected unknown images cannot borrow a recovery profile.");
                     if (modifiedResult is not null)
                     {
                         BridgeRequire(modifiedResult.BridgeVersionKnown == false &&
-                            !modifiedResult.ModeControlSupported && !modifiedResult.CustomControlSupported &&
-                            !modifiedResult.PeripheralControlSupported &&
+                            modifiedResult.ModeControlSupported && modifiedResult.CustomControlSupported &&
+                            modifiedResult.PeripheralControlSupported &&
                             logs.Any(line => line.Contains("通用静态解析", StringComparison.Ordinal)),
-                            $"Bridge {hash}: an unknown component that parses generically remains read-only.");
+                            $"Bridge {hash}: an unknown bridge preserves the verified board's write capabilities.");
+                        BridgeRequire(modifiedResult.ClientId == first!.ClientId &&
+                            modifiedResult.UserName == first.UserName && modifiedResult.Password == first.Password,
+                            $"Bridge {hash}: unrelated file bytes cannot alter extracted credentials.");
+                        CheckUnknownBridgeHardwarePolicy(read, machineType, modifiedPath, testPort, logs, hash);
+                        genericAccepted++;
                     }
                     CheckBridgeLogPrivacy(logs, first!, hash);
                     supported++;
@@ -148,7 +156,7 @@ internal static partial class Program
                 comparisons++;
             }
 
-            Console.WriteLine($"PASS: bridge components accepted={supported}, rejected={rejected}, modified components checked={supported}, abnormal sizes rejected=2, protected images recovered={recovered}, credential comparisons={comparisons}");
+            Console.WriteLine($"PASS: bridge components accepted={supported}, rejected={rejected}, modified components checked={supported}, unknown bridges parsed={genericAccepted}, abnormal sizes rejected=2, protected images recovered={recovered}, credential comparisons={comparisons}");
         }
         catch (BridgeCheckFailure) { throw; }
         catch (Exception error)
@@ -161,6 +169,30 @@ internal static partial class Program
         {
             if (retainedDirectory is not null)
                 Console.WriteLine($"Bridge mutation fixtures retained: {retainedDirectory}");
+        }
+    }
+
+    private static void CheckUnknownBridgeHardwarePolicy(MethodInfo read, Type machineType, string path,
+        int port, List<string> logs, string hash)
+    {
+        foreach (var (manufacturer, profile, mode) in new[]
+        {
+            ("MECHREVO", (string?)null, false),
+            ("MECHREVO", "GCU-RamFan1.5", true),
+            ("MECHREVO", "GCU-Legacy-ReadOnly", false),
+            ("Other", "GCU-RamFan1.5", false)
+        })
+        {
+            object machine = Activator.CreateInstance(machineType, manufacturer, "Offline test", "", "Unknown board")!;
+            machineType.GetProperty("ProtocolProfile")!.SetValue(machine, profile);
+            object?[] invokeArgs = [machine, path, port, null, new Action<string>(logs.Add)];
+            var result = (GcuConnectionOptions?)read.Invoke(null, invokeArgs);
+            BridgeRequire(result is not null && invokeArgs[3] is null && !result.BridgeVersionKnown,
+                $"Bridge {hash}: bridge credentials remain discoverable independently of hardware support.");
+            BridgeRequire(result!.ModeControlSupported == mode && !result.CustomControlSupported &&
+                !result.PeripheralControlSupported,
+                $"Bridge {hash}: only the reviewed hardware profile determines mode, custom and peripheral permissions.");
+            CheckBridgeLogPrivacy(logs, result, hash);
         }
     }
 

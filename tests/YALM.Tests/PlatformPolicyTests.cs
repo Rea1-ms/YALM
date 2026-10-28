@@ -113,10 +113,10 @@ internal static partial class Program
         await using var fake = new FakeTransport();
         await using var controller = new GcuController(fake, confirmationTimeout: TimeSpan.FromMilliseconds(100),
             confirmationPollInterval: TimeSpan.FromMilliseconds(2));
-        foreach (bool allowed in new[] { false, true, false })
+        foreach (var (allowed, bridgeKnown) in new[] { (false, true), (true, false), (false, false), (true, true) })
         {
             fake.OnPublish = null;
-            await controller.ConnectAsync(allowed ? Options : ReadOnlyPlatformOptions);
+            await controller.ConnectAsync((allowed ? Options : ReadOnlyPlatformOptions) with { BridgeVersionKnown = bridgeKnown });
             SeedCustomState(fake, profile: 0);
             fake.Emit("Setting/Status", "{\"FnKey\":\"FNKEY_UNLOCK\"}");
             fake.Published.Clear();

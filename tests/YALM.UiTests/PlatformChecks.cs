@@ -50,6 +50,7 @@ internal static partial class Program
 
         CheckMachineProfiles(machineType);
         CheckLegacyTelemetry();
+        CheckPlatformDiagnostics(machineType, inspect, discovery);
 
         object unknown = PlatformMachine(machineType, "MECHREVO", "Offline test", "Unknown board");
         foreach (string path in new[] { assembly.Location, Path.Combine(AppContext.BaseDirectory, "missing-platform", "GCUService.exe") })
@@ -206,6 +207,131 @@ internal static partial class Program
             "incomplete legacy RPM data is rejected instead of constructing a partial observation");
     }
 
+    private static void CheckPlatformDiagnostics(Type machineType, MethodInfo inspect, Type discovery)
+    {
+        const BindingFlags statics = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        MethodInfo workerPath = discovery.GetMethod("WorkerPathFromService", statics)!;
+
+        var missingServiceLog = new List<string>();
+        Require(workerPath.Invoke(null, [false, null, (Action<string>)missingServiceLog.Add]) is null &&
+            missingServiceLog.Any(line => line.Contains("未找到 GCUBridge 服务", StringComparison.Ordinal)),
+            "diagnostics identify a missing bridge service without exposing a path");
+
+        var malformedServiceLog = new List<string>();
+        Require(workerPath.Invoke(null, [true, "not-a-service-command", (Action<string>)malformedServiceLog.Add]) is null &&
+            malformedServiceLog.Any(line => line.Contains("未解析到有效的绝对程序路径", StringComparison.Ordinal)),
+            "diagnostics identify an unusable service command without echoing its contents");
+
+        string validBridge = Path.Combine(Path.GetTempPath(), "GCUBridge.exe");
+        var validServiceLog = new List<string>();
+        object? worker = workerPath.Invoke(null, [true, $"\"{validBridge}\" -service", (Action<string>)validServiceLog.Add]);
+        Require(worker is string derivedWorkerPath && derivedWorkerPath.EndsWith(Path.Combine("MyControlCenter", "GCUService.exe"), StringComparison.OrdinalIgnoreCase) &&
+            validServiceLog.Any(line => line.Contains("同目录 MyControlCenter/GCUService.exe", StringComparison.Ordinal)),
+            "diagnostics explain how the hardware worker path is derived from the bridge service");
+
+        object machine = PlatformMachine(machineType, "MECHREVO", "Offline test", "Unknown board");
+        var unknownLog = new List<string>();
+        object inspected = InspectPlatform(inspect, machine, Path.Combine(AppContext.BaseDirectory, "missing-platform", "GCUService.exe"),
+            (_, _) => Task.FromResult(PlatformRegisters(1)), unknownLog.Add);
+        Require(ReferenceEquals(inspected, machine) &&
+            unknownLog.Any(line => line.Contains("不存在", StringComparison.Ordinal)) &&
+            unknownLog.Any(line => line.Contains("厂商匹配=True", StringComparison.Ordinal)) &&
+            unknownLog.All(line => !line.Contains("missing-platform", StringComparison.Ordinal)),
+            "diagnostics report the missing worker and vendor decision without leaking the original path");
+
+        var existingLog = new List<string>();
+        inspected = InspectPlatform(inspect, machine, typeof(GcuController).Assembly.Location,
+            (_, _) => Task.FromResult(PlatformRegisters(1)), existingLog.Add);
+        Require(ReferenceEquals(inspected, machine) &&
+            existingLog.Any(line => line.Contains("文件大小=", StringComparison.Ordinal)) &&
+            existingLog.Any(line => line.Contains("SHA256=", StringComparison.Ordinal)) &&
+            existingLog.Any(line => line.Contains("未匹配已核对样本", StringComparison.Ordinal)),
+            "diagnostics record worker size and fingerprint before rejecting an unreviewed worker");
+
+        CheckAppTypeDiagnostics(machineType, inspect);
+
+        string retained = Path.GetFullPath(Path.Combine(".cache", "platform-diagnostics", Guid.NewGuid().ToString("N")));
+        Directory.CreateDirectory(retained);
+        try
+        {
+            foreach (long length in new[] { 0L, 63L, 64L * 1024 * 1024 + 1 })
+            {
+                string path = Path.Combine(retained, $"worker-{length}.exe");
+                using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write)) stream.SetLength(length);
+                var logs = new List<string>();
+                int reads = 0;
+                inspected = InspectPlatform(inspect, machine, path, (_, _) =>
+                {
+                    reads++;
+                    return Task.FromResult(PlatformRegisters(1));
+                }, logs.Add);
+                Require(ReferenceEquals(inspected, machine) && reads == 0 &&
+                    logs.Any(line => line.Contains($"文件大小={length} 字节", StringComparison.Ordinal) &&
+                        line.Contains("超出允许范围", StringComparison.Ordinal)),
+                    "invalid worker sizes are explained before any capability read");
+            }
+
+            var deniedLogs = new List<string>();
+            inspected = InspectPlatform(inspect, machine, retained, (_, _) =>
+                throw new InvalidOperationException("a directory cannot authorize firmware reads"), deniedLogs.Add);
+            Require(ReferenceEquals(inspected, machine) &&
+                deniedLogs.Any(line => line.Contains("权限不足", StringComparison.Ordinal)) &&
+                deniedLogs.All(line => !line.Contains(retained, StringComparison.Ordinal)),
+                "opening a directory as a worker reports access failure without exposing its path");
+        }
+        finally { Console.WriteLine($"Platform diagnostic fixtures retained: {retained}"); }
+    }
+
+    private static void CheckAppTypeDiagnostics(Type machineType, MethodInfo inspect)
+    {
+        const BindingFlags statics = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        MethodInfo classify = machineType.GetMethod("ClassifyOemAppTypeValue", statics)!;
+        MethodInfo failure = machineType.GetMethod("ClassifyOemAppTypeFailure", statics)!;
+        const string sentinel = "PLATFORM_DIAGNOSTIC_PRIVATE_SENTINEL";
+        var observations = new List<(object Observation, int? Value, string Status, string Expected)>();
+        foreach (var test in new (bool Key, object? Raw, int? Value, string Status, string Expected)[]
+        {
+            (false, null, null, "MissingKey", "注册项不存在"),
+            (true, null, null, "MissingValue", "AppType 值缺失"),
+            (true, sentinel, null, "InvalidType", "不是 DWORD 整数"),
+            (true, "1", null, "InvalidType", "不是 DWORD 整数"),
+            (true, 1L, null, "InvalidType", "不是 DWORD 整数"),
+            (true, 0, null, "InvalidValue", "数值无效"),
+            (true, 99, null, "InvalidValue", "数值无效"),
+            (true, 1, 1, "Supported", "匹配已核对分支"),
+            (true, 2, 2, "Supported", "匹配已核对分支"),
+            (true, 3, 3, "UnsupportedBranch", "类型 3 使用不同的模式编号分支")
+        })
+            observations.Add((classify.Invoke(null, [test.Key, test.Raw])!, test.Value, test.Status, test.Expected));
+
+        foreach (var test in new (Exception Error, string Status, string Expected)[]
+        {
+            (new UnauthorizedAccessException(sentinel), "AccessDenied", "读取 AppType 权限不足"),
+            (new System.Security.SecurityException(sentinel), "AccessDenied", "读取 AppType 权限不足"),
+            (new IOException(sentinel, new InvalidOperationException(sentinel)), "ReadFailed", "读取 AppType 失败")
+        })
+            observations.Add((failure.Invoke(null, [test.Error])!, null, test.Status, test.Expected));
+
+        foreach (var test in observations)
+        {
+            Type observationType = test.Observation.GetType();
+            object? value = observationType.GetProperty("Value")!.GetValue(test.Observation);
+            object status = observationType.GetProperty("Status")!.GetValue(test.Observation)!;
+            Require(Equals(value, test.Value) && status.ToString() == test.Status &&
+                !test.Observation.ToString()!.Contains(sentinel, StringComparison.Ordinal),
+                "application-type classification preserves support semantics without retaining raw registry data or exceptions");
+            object machine = PlatformMachine(machineType, "MECHREVO", "Offline test", "Unknown board");
+            machineType.GetProperty("OemAppType")!.SetValue(machine, value);
+            machineType.GetProperty("OemAppTypeStatus")!.SetValue(machine, status);
+            var logs = new List<string>();
+            InspectPlatform(inspect, machine, Path.Combine(AppContext.BaseDirectory, "missing-platform", "GCUService.exe"),
+                (_, _) => throw new InvalidOperationException("a missing worker cannot query firmware"), logs.Add);
+            Require(logs.Any(line => line.Contains(test.Expected, StringComparison.Ordinal)) &&
+                logs.All(line => !line.Contains(sentinel, StringComparison.Ordinal)),
+                "platform diagnostics distinguish missing, malformed, inaccessible and unsupported application types safely");
+        }
+    }
+
     private static void CheckUnknownPlatformControls(Type machineType, string? profile)
     {
         object machine = PlatformMachine(machineType, "MECHREVO", "Offline test", "Unknown board");
@@ -359,6 +485,7 @@ internal static partial class Program
                 Require(!PlatformFlag(inspected, "SupportsExtendedEcDiagnostics"),
                     "protocol discovery does not authorize the board-only extended diagnostics");
                 if (!fixture.ExpectedSupported) continue;
+                CheckReviewedPlatformDiagnostics(inspect, fixture.Path, inspected);
 
                 foreach (int? appType in new int?[] { null, 0, 3, 99 })
                 {
@@ -367,12 +494,21 @@ internal static partial class Program
                     machineType.GetProperty("ProtocolWorkerHash")!.SetValue(unsupportedApp, fixture.Hash);
                     machineType.GetProperty("OemAppType")!.SetValue(unsupportedApp, appType);
                     reads = 0;
+                    var logs = new List<string>();
                     object denied = InspectPlatform(inspect, unsupportedApp, fixture.Path, (_, _) =>
                     {
                         reads++;
                         return Task.FromResult(PlatformRegisters(1));
-                    });
-                    Require(PlatformWasRevoked(denied) && reads == 0,
+                    }, logs.Add);
+                    string expected = appType switch
+                    {
+                        null => "未采集到有效的 AppType",
+                        3 => "类型 3 使用不同的模式编号分支",
+                        _ => "应用类型数值无效"
+                    };
+                    Require(PlatformWasRevoked(denied) && reads == 0 &&
+                        logs.Any(line => line.Contains(expected, StringComparison.Ordinal)) &&
+                        logs.Any(line => line.Contains("跳过专用寄存器探测", StringComparison.Ordinal)),
                         $"application type {appType?.ToString() ?? "unknown"} revokes a previous full profile before querying firmware");
                 }
                 object secondAppType = PlatformMachine(machineType, "MECHREVO", "Offline test", "Unknown board");
@@ -433,6 +569,50 @@ internal static partial class Program
         }
     }
 
+    private static void CheckReviewedPlatformDiagnostics(MethodInfo inspect, string path, object previous)
+    {
+        const string sentinel = "PLATFORM_CAPABILITY_PRIVATE_SENTINEL";
+        foreach (var test in new (EcRegisterSnapshot Registers, string Reason, string Detail)[]
+        {
+            (PlatformRegisters(1) with { ErrorCode = 5, LastError = sentinel }, "固件能力读取报错", "错误码=5"),
+            (PlatformRegisters(1) with { LastError = sentinel }, "固件能力读取报错", "存在读取错误=True"),
+            (new EcRegisterSnapshot(), "固件能力寄存器缺失：1934、1856", "寄存器 1934=缺失"),
+            (new EcRegisterSnapshot { Registers = new Dictionary<int, byte> { [PlatformFanCapabilityAddress] = 0x40 } },
+                "固件能力寄存器缺失：1856", "原始项目号 1856=缺失"),
+            (new EcRegisterSnapshot { Registers = new Dictionary<int, byte> { [PlatformProjectIdAddress] = 1 } },
+                "固件能力寄存器缺失：1934", "寄存器 1934=缺失"),
+            (PlatformRegisters(1, 0), "风扇能力位 0x40 未置位", "寄存器 1934=0x00"),
+            (PlatformRegisters(0x81), "原始项目号未匹配已核对的普通协议分支", "原始项目号 1856=129（0x81）")
+        })
+        {
+            var logs = new List<string>();
+            object denied = InspectPlatform(inspect, previous, path, (_, _) => Task.FromResult(test.Registers), logs.Add);
+            Require(PlatformWasRevoked(denied) &&
+                logs.Any(line => line.Contains(test.Reason, StringComparison.Ordinal)) &&
+                logs.Any(line => line.Contains(test.Detail, StringComparison.Ordinal)) &&
+                logs.All(line => !line.Contains(sentinel, StringComparison.Ordinal)),
+                "capability rejection diagnostics preserve numeric evidence and precise reasons without copying raw errors");
+        }
+
+        foreach (Exception error in new Exception[]
+        {
+            new IOException(sentinel, new InvalidOperationException(sentinel)),
+            new UnauthorizedAccessException(sentinel),
+            new ArgumentException(sentinel),
+            new System.Security.SecurityException(sentinel)
+        })
+        {
+            var logs = new List<string>();
+            object denied = InspectPlatform(inspect, previous, path,
+                (_, _) => Task.FromException<EcRegisterSnapshot>(error), logs.Add);
+            Require(PlatformWasRevoked(denied) &&
+                logs.Any(line => line.Contains("固件能力读取失败", StringComparison.Ordinal) &&
+                    line.Contains(error.GetType().Name, StringComparison.Ordinal)) &&
+                logs.All(line => !line.Contains(sentinel, StringComparison.Ordinal)),
+                "capability read exceptions revoke support and report only the safe exception summary");
+        }
+    }
+
     private static EcRegisterSnapshot PlatformRegisters(byte project, byte flags = 0x40) => new()
     {
         Registers = new Dictionary<int, byte>
@@ -463,9 +643,10 @@ internal static partial class Program
         !PlatformFlag(machine, "SupportsPeripheralControl");
 
     private static object InspectPlatform(MethodInfo inspect, object machine, string path,
-        Func<IEnumerable<int>, CancellationToken, Task<EcRegisterSnapshot>> readRegisters)
+        Func<IEnumerable<int>, CancellationToken, Task<EcRegisterSnapshot>> readRegisters,
+        Action<string>? log = null)
     {
-        var task = (Task)inspect.Invoke(null, [machine, path, readRegisters, null, CancellationToken.None])!;
+        var task = (Task)inspect.Invoke(null, [machine, path, readRegisters, log, CancellationToken.None])!;
         task.GetAwaiter().GetResult();
         return task.GetType().GetProperty("Result")!.GetValue(task)!;
     }

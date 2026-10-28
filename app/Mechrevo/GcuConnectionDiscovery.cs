@@ -163,9 +163,9 @@ internal static class GcuConnectionDiscovery
     {
         BridgeVersionKnown = bridgeVersionKnown,
         TurboSupported = machine.TurboSupported,
-        ModeControlSupported = bridgeVersionKnown && machine.SupportsModeControl,
-        CustomControlSupported = bridgeVersionKnown && machine.SupportsCustomControl,
-        PeripheralControlSupported = bridgeVersionKnown && machine.SupportsPeripheralControl
+        ModeControlSupported = machine.SupportsModeControl,
+        CustomControlSupported = machine.SupportsCustomControl,
+        PeripheralControlSupported = machine.SupportsPeripheralControl
     };
 
     private static IEnumerable<string> Strings(PEReader pe, MetadataReader reader, string ns, string typeName, string methodName)

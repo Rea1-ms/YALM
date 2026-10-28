@@ -3,12 +3,20 @@ using System.Diagnostics;
 
 namespace YALM.Mechrevo;
 
+internal enum OemAppTypeReadStatus
+{
+    NotRead, MissingKey, MissingValue, InvalidType, InvalidValue, AccessDenied, ReadFailed, Supported, UnsupportedBranch
+}
+
+internal sealed record OemAppTypeObservation(int? Value, OemAppTypeReadStatus Status);
+
 internal sealed record MachineInfo(string Manufacturer, string Model, string BiosVersion, string BaseboardProduct)
 {
     public bool? TurboSupported { get; init; }
     public string? ProtocolProfile { get; init; }
     public string? ProtocolWorkerHash { get; init; }
     public int? OemAppType { get; init; }
+    public OemAppTypeReadStatus OemAppTypeStatus { get; init; }
     public bool IsMechrevo => string.Equals(Manufacturer.Trim(), "MECHREVO", StringComparison.OrdinalIgnoreCase);
     public bool HasVerifiedBoard => IsMechrevo &&
         (string.Equals(BaseboardProduct.Trim(), "GM6PX0X", StringComparison.OrdinalIgnoreCase) ||
@@ -34,6 +42,7 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
 
     public static MachineInfo Read()
     {
+        OemAppTypeObservation appType = ReadOemAppType();
         try
         {
             using var bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS", writable: false);
@@ -44,16 +53,21 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
                 bios?.GetValue("BaseBoardProduct")?.ToString() ?? string.Empty)
             {
                 TurboSupported = ReadTurboCapability(),
-                OemAppType = ReadOemAppType()
+                OemAppType = appType.Value,
+                OemAppTypeStatus = appType.Status
             };
         }
         catch
         {
-            return new MachineInfo(string.Empty, string.Empty, string.Empty, string.Empty);
+            return new MachineInfo(string.Empty, string.Empty, string.Empty, string.Empty)
+            {
+                OemAppType = appType.Value,
+                OemAppTypeStatus = appType.Status
+            };
         }
     }
 
-    private static int? ReadOemAppType()
+    private static OemAppTypeObservation ReadOemAppType()
     {
         try
         {
@@ -61,10 +75,45 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
             using var settings = registry.OpenSubKey(@"SOFTWARE\OEM\GamingCenter2", false);
             // New protocol grants require an explicit DWORD; unknown configuration stays read-only.
             object? value = settings?.GetValue("AppType");
-            return value is int number && number is 1 or 2 or 3 ? number : null;
+            return ClassifyOemAppTypeValue(settings is not null, value);
         }
-        catch { return null; }
+        catch (Exception exception) { return ClassifyOemAppTypeFailure(exception); }
     }
+
+    // Keep only a classification; raw registry values and exception messages may contain secrets.
+    internal static OemAppTypeObservation ClassifyOemAppTypeValue(bool settingsFound, object? value)
+    {
+        if (!settingsFound) return new(null, OemAppTypeReadStatus.MissingKey);
+        if (value is null) return new(null, OemAppTypeReadStatus.MissingValue);
+        if (value is not int number) return new(null, OemAppTypeReadStatus.InvalidType);
+        return number switch
+        {
+            1 or 2 => new(number, OemAppTypeReadStatus.Supported),
+            3 => new(number, OemAppTypeReadStatus.UnsupportedBranch),
+            _ => new(null, OemAppTypeReadStatus.InvalidValue)
+        };
+    }
+
+    internal static OemAppTypeObservation ClassifyOemAppTypeFailure(Exception exception) => new(null,
+        exception is UnauthorizedAccessException or System.Security.SecurityException
+            ? OemAppTypeReadStatus.AccessDenied : OemAppTypeReadStatus.ReadFailed);
+
+    internal string DescribeOemAppType() => OemAppType switch
+    {
+        1 or 2 => "已读取明确的 DWORD 应用类型，匹配已核对分支",
+        3 => "类型 3 使用不同的模式编号分支，当前不支持",
+        not null => "应用类型数值无效，未匹配已核对的 1、2 或 3",
+        _ => OemAppTypeStatus switch
+        {
+            OemAppTypeReadStatus.MissingKey => "64 位厂商应用类型注册项不存在",
+            OemAppTypeReadStatus.MissingValue => "厂商注册项存在，但 AppType 值缺失",
+            OemAppTypeReadStatus.InvalidType => "AppType 值不是 DWORD 整数，无法确认应用类型",
+            OemAppTypeReadStatus.InvalidValue => "AppType 数值无效，未匹配已核对的 1、2 或 3",
+            OemAppTypeReadStatus.AccessDenied => "读取 AppType 权限不足",
+            OemAppTypeReadStatus.ReadFailed => "读取 AppType 失败，未取得有效应用类型",
+            _ => "未采集到有效的 AppType 应用类型"
+        }
+    };
 
     private static bool? ReadTurboCapability()
     {

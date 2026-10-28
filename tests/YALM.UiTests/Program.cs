@@ -49,6 +49,7 @@ internal static partial class Program
         try
         {
             Set(form, "_controller", controller);
+            Set(form, "_connectionOptions", new GcuConnectionOptions("offline", "offline", "offline") { BridgeVersionKnown = false });
             Set(form, "_machineBlockReason", null);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             var baseline = new GcuSnapshot
@@ -71,6 +72,8 @@ internal static partial class Program
             var modes = Get<Dictionary<PerformanceMode, ToolStripMenuItem>>(form, "_trayModes");
             var gpu = Get<Dictionary<GpuDisplayRoute, ToolStripMenuItem>>(form, "_trayGpuModes");
             Require(modes[PerformanceMode.Balanced].Checked && modes.Values.All(item => item.Enabled), "fresh modes are available and actual mode is checked");
+            Require(Get<Control>(form, "_openCustomMode").Enabled,
+                "an unknown bridge does not block opening the custom page on supported hardware");
             Require(gpu[GpuDisplayRoute.Hybrid].Checked && !gpu[GpuDisplayRoute.Direct].Checked &&
                 gpu[GpuDisplayRoute.Direct].Text?.Contains("待重启") == true, "GPU check follows actual route while saved target is marked pending");
             Require(!Get<ToolStripMenuItem>(form, "_trayFanBoost").Enabled, "preset mode cannot toggle custom fan boost");

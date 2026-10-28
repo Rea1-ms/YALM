@@ -97,7 +97,7 @@ internal sealed partial class MechrevoForm
     private async Task SwitchGpuModeAsync(GpuDisplayRoute target)
     {
         if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
-        _machineBlockReason = CurrentControlBlockReason();
+        _machineBlockReason = _machine.GetModeControlBlockReason();
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (!_machine.SupportsPeripheralControl || _machineBlockReason is not null ||
             _gpuRoute?.IsFresh(now) != true || _gpuRoute.Route is not (GpuDisplayRoute.Hybrid or GpuDisplayRoute.Direct) ||
