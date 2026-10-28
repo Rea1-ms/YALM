@@ -196,7 +196,7 @@ internal sealed partial class MechrevoForm
 
     private async Task ToggleTrayFanBoostAsync()
     {
-        _machineBlockReason = _machine.GetModeControlBlockReason();
+        _machineBlockReason = CurrentControlBlockReason();
         if (!CanToggleTrayFanBoost(DateTimeOffset.UtcNow))
         {
             ShowActionStatus("请先进入自定义模式，并等待完整、新鲜的状态；暂时不能切换风扇增强。");

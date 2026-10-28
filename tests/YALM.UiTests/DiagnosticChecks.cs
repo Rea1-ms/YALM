@@ -47,9 +47,12 @@ internal static partial class Program
 
         MethodInfo read = discovery.GetMethod("ReadBridge", BindingFlags.Static | BindingFlags.NonPublic)!;
         object?[] bridgeArgs = [machine, assembly.Location, 13688, null, new Action<string>(logs.Add)];
-        Require(read.Invoke(null, bridgeArgs) is null && bridgeArgs[3]?.ToString()?.Contains("尚未适配") == true &&
-            logs.Any(line => line.Contains("SHA256=") && line.Contains("已验证版本=False")),
-            "unverified component records a fingerprint and stays blocked before metadata extraction");
+        Require(read.Invoke(null, bridgeArgs) is null &&
+            bridgeArgs[3]?.ToString()?.Contains("结构校验失败") == true &&
+            bridgeArgs[3]?.ToString()?.Contains("未知版本") == true &&
+            logs.Any(line => line.Contains("SHA256=") && line.Contains("已验证版本=False")) &&
+            logs.Any(line => line.Contains("尝试通用静态解析")),
+            "unverified component records a fingerprint, attempts generic metadata parsing, and explains a structural rejection");
         bridgeArgs[1] = Path.Combine(AppContext.BaseDirectory, "missing-vendor-component", "GCUBridge.exe");
         Require(read.Invoke(null, bridgeArgs) is null && bridgeArgs[3]?.ToString()?.Contains("不存在") == true,
             "missing component has a distinct diagnostic reason");

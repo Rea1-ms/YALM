@@ -9,6 +9,11 @@ public enum PerformanceMode { Silent = 0, Balanced = 1, Turbo = 2 }
 
 public sealed record GcuConnectionOptions(string ClientId, string UserName, string Password, int Port = 13688)
 {
+    // Unknown bridge files may still be parsed for read-only diagnostics, but
+    // they must not grant hardware write capabilities merely by matching the
+    // credential extraction shape.
+    public bool BridgeVersionKnown { get; init; } = true;
+
     // Read-only capability supplied by the platform adapter, never inferred from a current mode.
     public bool? TurboSupported { get; init; }
 

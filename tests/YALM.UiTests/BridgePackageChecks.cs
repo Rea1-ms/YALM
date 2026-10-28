@@ -103,8 +103,17 @@ internal static partial class Program
                     }
                     logs.Clear();
                     object?[] modifiedArgs = [machine, modifiedPath, testPort, null, new Action<string>(logs.Add)];
-                    BridgeRequire(read.Invoke(null, modifiedArgs) is null && modifiedArgs[3] is string,
-                        $"Bridge {hash}: a modified component must remain blocked before credential extraction.");
+                    var modifiedResult = (GcuConnectionOptions?)read.Invoke(null, modifiedArgs);
+                    BridgeRequire(modifiedResult is not null || modifiedArgs[3] is string,
+                        $"Bridge {hash}: a modified component must either pass the generic parser or explain its rejection.");
+                    if (modifiedResult is not null)
+                    {
+                        BridgeRequire(modifiedResult.BridgeVersionKnown == false &&
+                            !modifiedResult.ModeControlSupported && !modifiedResult.CustomControlSupported &&
+                            !modifiedResult.PeripheralControlSupported &&
+                            logs.Any(line => line.Contains("通用静态解析", StringComparison.Ordinal)),
+                            $"Bridge {hash}: an unknown component that parses generically remains read-only.");
+                    }
                     CheckBridgeLogPrivacy(logs, first!, hash);
                     supported++;
                 }
@@ -139,7 +148,7 @@ internal static partial class Program
                 comparisons++;
             }
 
-            Console.WriteLine($"PASS: bridge components accepted={supported}, rejected={rejected}, modified components rejected={supported}, abnormal sizes rejected=2, protected images recovered={recovered}, credential comparisons={comparisons}");
+            Console.WriteLine($"PASS: bridge components accepted={supported}, rejected={rejected}, modified components checked={supported}, abnormal sizes rejected=2, protected images recovered={recovered}, credential comparisons={comparisons}");
         }
         catch (BridgeCheckFailure) { throw; }
         catch (Exception error)

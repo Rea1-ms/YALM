@@ -8,7 +8,7 @@ using System.Security.Cryptography;
 
 namespace YALM.Mechrevo;
 
-/// <summary>Reads an audited vendor assembly as data; never loads or executes it.</summary>
+/// <summary>Reads vendor bridge metadata as data; never loads or executes the vendor assembly.</summary>
 internal static class GcuConnectionDiscovery
 {
     // Audited on 2026-10-28 against the supplied official installers. A matching
@@ -87,7 +87,7 @@ internal static class GcuConnectionDiscovery
             }
             return ReadBridge(machine, path, port, out failure, log);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException or InvalidOperationException or System.Security.SecurityException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException or IndexOutOfRangeException or OverflowException or InvalidOperationException or System.Security.SecurityException)
         {
             failure = "厂商桥接服务信息读取失败，请查看日志。";
             log?.Invoke(failure + " " + MechrevoDiagnostics.ExceptionSummary(exception));
@@ -113,11 +113,7 @@ internal static class GcuConnectionDiscovery
             bool known = KnownBridges.TryGetValue(hash, out string? packages);
             log?.Invoke($"桥接组件校验：SHA256={hash}；已验证版本={known}；匹配官方包={packages ?? "未收录"}；校验范围=连接资料静态解析");
             if (!known)
-            {
-                failure = "桥接组件版本尚未适配，已跳过自动连接；详情见日志。";
-                log?.Invoke(failure);
-                return null;
-            }
+                log?.Invoke("桥接组件版本未收录；尝试通用静态解析连接资料，不加载或执行厂商程序集。");
             if (GcuBridgeImage.IsProtected(hash))
             {
                 byte[]? recovered = GcuBridgeImage.ReadDecrypted(hash, image);
@@ -138,17 +134,21 @@ internal static class GcuConnectionDiscovery
                 .FirstOrDefault(value => value == "UWPClient");
             if (prefix is null || parts.Length != 4 || parts[1] != parts[2])
             {
-                failure = "桥接组件结构校验失败，已跳过自动连接。";
+                failure = known
+                    ? "桥接组件结构校验失败，已跳过自动连接。"
+                    : "桥接组件结构校验失败，未知版本未能通过通用静态解析，已跳过自动连接。";
                 log?.Invoke(failure);
                 return null;
             }
             // Use a high slot; the vendor does not provide exclusive reservations.
             // The process mutex prevents collisions between this tool's local instances.
             const string slot = "19";
-            log?.Invoke("自动发现成功；使用预生成槽位 19，不记录连接凭据。");
-            return ApplyMachinePolicy(new(prefix + parts[0] + slot, prefix + parts[1] + slot, prefix + parts[3] + slot, port), machine);
+            log?.Invoke(known
+                ? "自动发现成功；使用预生成槽位 19，不记录连接凭据。"
+                : "未知桥接版本通过通用静态解析；使用预生成槽位 19，不记录连接凭据。实际连接和状态回报仍需现场确认。");
+            return ApplyMachinePolicy(new(prefix + parts[0] + slot, prefix + parts[1] + slot, prefix + parts[3] + slot, port), machine, known);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException or InvalidOperationException or System.Security.SecurityException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException or IndexOutOfRangeException or OverflowException or InvalidOperationException or System.Security.SecurityException)
         {
             failure = exception is FileNotFoundException or DirectoryNotFoundException ? "厂商桥接组件文件不存在，无法自动连接。"
                 : exception is UnauthorizedAccessException ? "无法读取厂商桥接组件，请检查文件访问权限。"
@@ -158,12 +158,14 @@ internal static class GcuConnectionDiscovery
         }
     }
 
-    private static GcuConnectionOptions ApplyMachinePolicy(GcuConnectionOptions options, MachineInfo machine) => options with
+    private static GcuConnectionOptions ApplyMachinePolicy(GcuConnectionOptions options, MachineInfo machine,
+        bool bridgeVersionKnown = true) => options with
     {
+        BridgeVersionKnown = bridgeVersionKnown,
         TurboSupported = machine.TurboSupported,
-        ModeControlSupported = machine.SupportsModeControl,
-        CustomControlSupported = machine.SupportsCustomControl,
-        PeripheralControlSupported = machine.SupportsPeripheralControl
+        ModeControlSupported = bridgeVersionKnown && machine.SupportsModeControl,
+        CustomControlSupported = bridgeVersionKnown && machine.SupportsCustomControl,
+        PeripheralControlSupported = bridgeVersionKnown && machine.SupportsPeripheralControl
     };
 
     private static IEnumerable<string> Strings(PEReader pe, MetadataReader reader, string ns, string typeName, string methodName)

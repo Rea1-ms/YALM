@@ -64,7 +64,7 @@ internal sealed partial class MechrevoForm : RForm
         InitTheme(true);
         InitializeTray();
         TopMost = !_demo && AppConfig.Is("topmost");
-        _machineBlockReason = _demo ? null : _machine.GetModeControlBlockReason();
+        _machineBlockReason = _demo ? null : CurrentControlBlockReason();
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _ecRefreshTimer.Tick += async (_, _) => await RefreshEcAsync();
         _smokeTimer.Tick += (_, _) => { _smokeTimer.Stop(); ExitApplication(); };
@@ -223,10 +223,11 @@ internal sealed partial class MechrevoForm : RForm
             _machine = await GcuPlatformDiscovery.DiscoverAsync(MachineInfo.Read(), Logger.WriteLine, _lifetime.Token);
             _ecSnapshot = null;
             _ecFanReader = new EcFanReader(readProtection: _machine.SupportsEcProtection);
-            _machineBlockReason = _machine.GetModeControlBlockReason();
+            _machineBlockReason = CurrentControlBlockReason();
             if (_machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
             LoadConnectionEnvironment();
             if (_connectionOptions is null) return;
+            _machineBlockReason = CurrentControlBlockReason();
             if (_controller is null)
             {
                 _controller = new GcuController(new GcuMqttTransport(Logger.WriteLine), readAcPower: MachineInfo.ReadAcPower);
@@ -260,7 +261,7 @@ internal sealed partial class MechrevoForm : RForm
         _refreshing = true;
         try
         {
-            if (!_demo) _machineBlockReason = _machine.GetModeControlBlockReason();
+            if (!_demo) _machineBlockReason = CurrentControlBlockReason();
             await RefreshGpuRouteAsync();
             if (_closing) return;
             RenderSnapshot();
@@ -318,7 +319,7 @@ internal sealed partial class MechrevoForm : RForm
     private async Task SwitchModeAsync(PerformanceMode mode)
     {
         if (_demo || _startupTest || _closing || _connecting || _switching || _keyboardBusy || _controller is null) return;
-        _machineBlockReason = _machine.GetModeControlBlockReason();
+        _machineBlockReason = CurrentControlBlockReason();
         var now = DateTimeOffset.UtcNow;
         bool thermalProtectionActive = _ecSnapshot?.IsFresh(now) == true &&
             _ecSnapshot.GenericThermalProtect == true;
@@ -366,7 +367,9 @@ internal sealed partial class MechrevoForm : RForm
         }
 
         _customModeForm = new CustomModeForm(_controller, () => _ecSnapshot, _demo,
-            () => _machine.GetCustomControlBlockReason()) { Owner = this };
+            () => _connectionOptions?.BridgeVersionKnown == false
+                ? "桥接版本未收录，当前仅读取服务状态。"
+                : _machine.GetCustomControlBlockReason()) { Owner = this };
         _customModeForm.FormClosed += (_, _) => _customModeForm = null;
         _customModeForm.Show(this);
     }
@@ -434,7 +437,8 @@ internal sealed partial class MechrevoForm : RForm
             button.Enabled = !_startupTest && !_connecting && !_switching && !_keyboardBusy && !thermalProtectionActive && bothRpmFresh &&
                 _machineBlockReason is null && connected && snapshot!.CanSwitchMode(mode, now);
         }
-        _openCustomMode.Enabled = !_startupTest && !_connecting && !_switching && connected && _controller is not null;
+        _openCustomMode.Enabled = !_startupTest && !_connecting && !_switching && connected &&
+            _controller is not null && _machineBlockReason is null;
         foreach (RButton button in _modeButtons.Values) _keyboardTips.SetToolTip(button, _controlMessage);
         _keyboardTips.SetToolTip(_reportedMode, _controlMessage);
         RenderConnectionStatus();
@@ -516,6 +520,10 @@ internal sealed partial class MechrevoForm : RForm
 
     private string SafeMessage(string message) => string.IsNullOrEmpty(_connectionOptions?.Password)
         ? message : message.Replace(_connectionOptions.Password, "[已隐藏]", StringComparison.Ordinal);
+
+    private string? CurrentControlBlockReason() => _connectionOptions?.BridgeVersionKnown == false
+        ? "桥接版本未收录，当前仅读取服务状态。"
+        : _machine.GetModeControlBlockReason();
 
     private static string Value(int? value, bool fresh, string unit) => fresh && value.HasValue
         ? value.Value.ToString() + unit : "未收到";
