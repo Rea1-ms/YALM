@@ -3,6 +3,9 @@ namespace YALM.Mechrevo;
 internal static class GcuEnvironment
 {
     private static readonly string[] Fields = ["CLIENT_ID", "USERNAME", "PASSWORD", "PORT"];
+    internal static bool HasOverrides => Fields.Any(name =>
+        Environment.GetEnvironmentVariable("YALM_GCU_" + name) is not null ||
+        Environment.GetEnvironmentVariable("MHELPER_GCU_" + name) is not null);
 
     public static string? Get(string field)
     {

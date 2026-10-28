@@ -9,6 +9,11 @@ internal enum OemAppTypeReadStatus
 }
 
 internal sealed record OemAppTypeObservation(int? Value, OemAppTypeReadStatus Status);
+internal enum OemH2RamReadStatus
+{
+    NotRead, MissingKey, MissingValue, InvalidType, InvalidValue, AccessDenied, ReadFailed, Supported, Disabled
+}
+internal sealed record OemH2RamObservation(bool? Supported, OemH2RamReadStatus Status);
 
 internal sealed record MachineInfo(string Manufacturer, string Model, string BiosVersion, string BaseboardProduct)
 {
@@ -17,6 +22,8 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
     public string? ProtocolWorkerHash { get; init; }
     public int? OemAppType { get; init; }
     public OemAppTypeReadStatus OemAppTypeStatus { get; init; }
+    public bool? OemH2RamSupported { get; init; }
+    public OemH2RamReadStatus OemH2RamStatus { get; init; }
     public bool IsMechrevo => string.Equals(Manufacturer.Trim(), "MECHREVO", StringComparison.OrdinalIgnoreCase);
     public bool HasVerifiedBoard => IsMechrevo &&
         (string.Equals(BaseboardProduct.Trim(), "GM6PX0X", StringComparison.OrdinalIgnoreCase) ||
@@ -43,6 +50,7 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
     public static MachineInfo Read()
     {
         OemAppTypeObservation appType = ReadOemAppType();
+        OemH2RamObservation h2Ram = ReadOemH2Ram();
         try
         {
             using var bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS", writable: false);
@@ -54,7 +62,9 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
             {
                 TurboSupported = ReadTurboCapability(),
                 OemAppType = appType.Value,
-                OemAppTypeStatus = appType.Status
+                OemAppTypeStatus = appType.Status,
+                OemH2RamSupported = h2Ram.Supported,
+                OemH2RamStatus = h2Ram.Status
             };
         }
         catch
@@ -62,10 +72,53 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
             return new MachineInfo(string.Empty, string.Empty, string.Empty, string.Empty)
             {
                 OemAppType = appType.Value,
-                OemAppTypeStatus = appType.Status
+                OemAppTypeStatus = appType.Status,
+                OemH2RamSupported = h2Ram.Supported,
+                OemH2RamStatus = h2Ram.Status
             };
         }
     }
+
+    private static OemH2RamObservation ReadOemH2Ram()
+    {
+        try
+        {
+            using var registry = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var settings = registry.OpenSubKey(@"SOFTWARE\OEM\GamingCenter2", false);
+            return ClassifyOemH2RamValue(settings is not null, settings?.GetValue("SupportH2Ram"));
+        }
+        catch (Exception ex) { return ClassifyOemH2RamFailure(ex); }
+    }
+
+    internal static OemH2RamObservation ClassifyOemH2RamValue(bool settingsFound, object? value)
+    {
+        if (!settingsFound) return new(null, OemH2RamReadStatus.MissingKey);
+        if (value is null) return new(null, OemH2RamReadStatus.MissingValue);
+        if (value is not int number) return new(null, OemH2RamReadStatus.InvalidType);
+        return number switch
+        {
+            1 => new(true, OemH2RamReadStatus.Supported),
+            0 => new(false, OemH2RamReadStatus.Disabled),
+            _ => new(null, OemH2RamReadStatus.InvalidValue)
+        };
+    }
+
+    internal static OemH2RamObservation ClassifyOemH2RamFailure(Exception ex) => new(null,
+        ex is UnauthorizedAccessException or System.Security.SecurityException
+            ? OemH2RamReadStatus.AccessDenied : OemH2RamReadStatus.ReadFailed);
+
+    internal string DescribeOemH2Ram() => OemH2RamStatus switch
+    {
+        OemH2RamReadStatus.MissingKey => "64 位厂商设置注册项不存在",
+        OemH2RamReadStatus.MissingValue => "SupportH2Ram 值缺失",
+        OemH2RamReadStatus.InvalidType => "SupportH2Ram 值不是 DWORD 整数",
+        OemH2RamReadStatus.InvalidValue => "SupportH2Ram 数值不是 0 或 1",
+        OemH2RamReadStatus.AccessDenied => "读取 SupportH2Ram 权限不足",
+        OemH2RamReadStatus.ReadFailed => "读取 SupportH2Ram 失败",
+        OemH2RamReadStatus.Supported => "SupportH2Ram 明确为 1",
+        OemH2RamReadStatus.Disabled => "SupportH2Ram 明确为 0",
+        _ => "未取得明确的 SupportH2Ram 配置"
+    };
 
     private static OemAppTypeObservation ReadOemAppType()
     {

@@ -140,7 +140,7 @@ internal sealed partial class MechrevoForm
     {
         if (_trayIcon is null || _trayMenu is null || _trayDisposed || _closing) return;
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        GcuSnapshot? snapshot = _controller?.Snapshot;
+        GcuSnapshot? snapshot = DisplaySnapshot;
         GpuDisplayRoute actual = _demo ? GpuDisplayRoute.Direct
             : _gpuRoute?.IsFresh(now) == true ? _gpuRoute.Route : GpuDisplayRoute.Unknown;
         var iconKey = (Route: actual, Monochrome: _bwTrayIcon, Dark: IsTaskbarDark());
@@ -152,7 +152,7 @@ internal sealed partial class MechrevoForm
             _trayIconKey = iconKey;
             oldIcon?.Dispose();
         }
-        string performance = _demo ? "均衡" : snapshot?.IsConnected == true && snapshot.IsStatusFresh(now)
+        string performance = _demo ? "均衡" : snapshot?.IsConnected == true && snapshot.IsModeFresh(now)
             ? ModeName(snapshot.Mode) : "未收到";
         _trayIcon.Text = $"YALM{(_demo ? " · 演示" : "")} · {performance} · {GpuModeName(actual)}";
         _trayMenu.BackColor = BackColor;
@@ -162,7 +162,7 @@ internal sealed partial class MechrevoForm
             item.Checked = _modeButtons[mode].Activated;
             item.Enabled = _modeButtons[mode].Enabled;
         }
-        _trayCustomMode!.Checked = snapshot?.IsConnected == true && snapshot.IsStatusFresh(now) && snapshot.Mode == 3;
+        _trayCustomMode!.Checked = snapshot?.IsConnected == true && snapshot.IsModeFresh(now) && snapshot.Mode == 3;
         _trayFanBoost!.Checked = snapshot?.IsConnected == true && snapshot.IsStatusFresh(now) && snapshot.Mode == 3 && snapshot.IsCustomSettingsFresh(now) &&
             snapshot.CustomSettings?.FanBoostEnabled == true;
         _trayFanBoost.Enabled = CanToggleTrayFanBoost(now);

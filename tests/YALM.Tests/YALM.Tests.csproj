@@ -17,6 +17,12 @@
     <Compile Include="GpuModeTests.cs" />
     <Compile Include="QuickSettingsTests.cs" />
     <Compile Include="PlatformPolicyTests.cs" />
+    <Compile Include="JiaolongProtocolTests.cs" />
+    <Compile Include="IminiProtocolTests.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\IminiReadProtocol.cs" Link="Core\IminiReadProtocol.cs" />
+    <Compile Include="YilongProtocolTests.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\JiaolongReadProtocol.cs" Link="Core\JiaolongReadProtocol.cs" />
+    <Compile Include="..\..\app\Mechrevo\Core\YilongReadProtocol.cs" Link="Core\YilongReadProtocol.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuQuickSettings.cs" Link="Core\GcuQuickSettings.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\GcuKeyboardModels.cs" Link="Core\GcuKeyboardModels.cs" />
     <Compile Include="..\..\app\Mechrevo\Core\EcFanModels.cs" Link="Core\EcFanModels.cs" />

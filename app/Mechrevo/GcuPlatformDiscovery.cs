@@ -14,6 +14,25 @@ internal static class GcuPlatformDiscovery
     internal static readonly int[] CapabilityAddresses = [FanCapabilityAddress, ProjectIdAddress];
     internal const string LegacyReadOnlyWorker = "8619B7B1AEC9F97E71224CF2FBB2551D22CAB5CD9F872C16441285B83C88AFFE";
 
+    // These workers share the reviewed four-byte RPM read path. Their thermal
+    // protection semantics are not established, so none can grant control.
+    private static readonly IReadOnlyDictionary<string, string> ReviewedReadOnlyWorkers = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [LegacyReadOnlyWorker] = "3.4.15.0",
+        ["178953B081593B69E30A0728C9E5935ED63FA36FF1CE6DBDC654D7548B6E3E20"] = "3.4.39.0 / 3.0.0.14",
+        ["8C490C54A15977F7421AC819A54370CC40E5C9E1DCAC94177FBFE1821DE94A2F"] = "4.17.47.13"
+    };
+
+    // These commercial workers can also fall back to ECIO.dll. Only the
+    // explicit shared-memory setting and its reviewed project check qualify
+    // them for our existing read driver; the fallback is never invoked here.
+    private static readonly IReadOnlyDictionary<string, string> ReviewedH2RamWorkers = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["5119C511B7D0B8D0ADB4B0EEAE89CB66DCC47A8AAE996FD8E4F6A38DFE6DF0FA"] = "1.1.0.32",
+        ["503E2AD88824288835F5070CA9552353F865C0411087A81CB0ED1EB7079EE1BA"] = "1.1.0.49",
+        ["B44CCCF4DDE1D9A9D529E4648F2466008949911235BF2CFF173B4240ABCA9B39"] = "1.1.0.63"
+    };
+
     // These are hardware workers, not GCUBridge binaries. See the protocol audit.
     private static readonly IReadOnlyDictionary<string, string> ReviewedWorkers = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -90,11 +109,13 @@ internal static class GcuPlatformDiscovery
     {
         string? hash = ReadWorkerHash(workerPath, log);
         if (hash is null) return machine;
-        if (hash == LegacyReadOnlyWorker)
+        if (ReviewedReadOnlyWorkers.TryGetValue(hash, out string? readOnlyVersion))
         {
-            log?.Invoke("机型协议：旧版服务仅启用已核对的转速读取；保护读取未适配，所有控制保持禁用。");
+            log?.Invoke($"机型协议：旧版硬件服务={readOnlyVersion}，仅启用已核对的转速读取；保护读取未适配，所有控制保持禁用。");
             return machine with { ProtocolProfile = "GCU-Legacy-ReadOnly", ProtocolWorkerHash = hash };
         }
+        if (ReviewedH2RamWorkers.TryGetValue(hash, out string? h2RamVersion))
+            return await InspectH2RamWorkerAsync(machine, hash, h2RamVersion, readRegisters, log, ct).ConfigureAwait(false);
         if (!ReviewedWorkers.TryGetValue(hash, out string? version))
         {
             log?.Invoke("机型协议：硬件工作进程 SHA256 未匹配已核对样本，跳过专用寄存器探测，保留只读；桥接连接能力独立判断。");
@@ -125,6 +146,46 @@ internal static class GcuPlatformDiscovery
             ? $"机型协议：硬件服务={version}；应用类型、风扇能力位与原始项目号均匹配，启用 GCU-RamFan1.5 已核对能力。"
             : $"机型协议：{failure}，保留只读。");
         return failure is null ? machine with { ProtocolProfile = "GCU-RamFan1.5", ProtocolWorkerHash = hash } : machine;
+    }
+
+    private static async Task<MachineInfo> InspectH2RamWorkerAsync(MachineInfo machine, string hash, string version,
+        Func<IEnumerable<int>, CancellationToken, Task<EcRegisterSnapshot>> readRegisters,
+        Action<string>? log, CancellationToken ct)
+    {
+        log?.Invoke($"机型协议：已核对旧商用硬件服务={version}；{machine.DescribeOemH2Ram()}");
+        if (machine.OemH2RamSupported != true)
+        {
+            log?.Invoke("机型协议：共享内存读取开关未明确开启，跳过寄存器探测，不使用独立驱动回退路径。");
+            return machine;
+        }
+        EcRegisterSnapshot values;
+        try
+        {
+            values = await readRegisters([ProjectIdAddress], ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or
+            System.Security.SecurityException)
+        {
+            log?.Invoke("机型协议：共享内存项目号读取失败，保留只读；" + MechrevoDiagnostics.ExceptionSummary(ex));
+            return machine;
+        }
+        if (values.ErrorCode is not (null or 0) || values.LastError is not null)
+        {
+            log?.Invoke($"机型协议：共享内存项目号读取报错，保留只读；错误码={values.ErrorCode?.ToString() ?? "无"}；存在读取错误={values.LastError is not null}");
+            return machine;
+        }
+        if (!values.Registers.TryGetValue(ProjectIdAddress, out byte project))
+        {
+            log?.Invoke($"机型协议：共享内存项目号寄存器缺失：{ProjectIdAddress}，保留只读。");
+            return machine;
+        }
+        if (project is < 1 or > 16)
+        {
+            log?.Invoke($"机型协议：共享内存原始项目号={project}（0x{project:X2}），未匹配已核对的 1～16 分支，保留只读。");
+            return machine;
+        }
+        log?.Invoke($"机型协议：共享内存原始项目号={project}（0x{project:X2}），仅启用已核对的转速读取；保护读取未适配，所有控制保持禁用。");
+        return machine with { ProtocolProfile = "GCU-Legacy-ReadOnly", ProtocolWorkerHash = hash };
     }
 
     private static MachineInfo ClearProtocol(MachineInfo machine) =>

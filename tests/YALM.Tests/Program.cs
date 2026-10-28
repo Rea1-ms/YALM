@@ -13,6 +13,16 @@ internal static partial class Program
     {
         var tests = new (string Name, Func<Task> Run)[]
         {
+            ("Jiaolong requests contain only reviewed reads", JiaolongRequestsAreReadOnly),
+            ("Jiaolong readings map and expire independently", JiaolongReadingsMapAndExpireIndependently),
+            ("Jiaolong invalid replies stay unknown", JiaolongInvalidRepliesStayUnknown),
+            ("Imini requests contain only reviewed reads", IminiRequestsAreReadOnly),
+            ("Imini modes and numbered fans decode", IminiModesAndNumberedFansDecode),
+            ("Imini invalid fields remain independent", IminiInvalidAndMissingFieldsStayIndependent),
+            ("Imini temperature uses the reviewed low byte", IminiTemperatureUsesTheReviewedLowByte),
+            ("Yilong requests contain only reviewed reads", YilongRequestsAreReadOnly),
+            ("Yilong modes and field freshness", YilongModesAndFieldFreshness),
+            ("Yilong invalid values stay unknown", YilongInvalidValuesStayUnknown),
             ("unreviewed platforms reject all writes", PlatformPolicyRejectsWritesDespiteFreshStatus),
             ("read-only platforms retain status refresh", PlatformPolicyKeepsReadOnlyRefreshes),
             ("platform permissions are independent", PlatformPolicyCapabilitiesRemainIndependent),

@@ -55,6 +55,12 @@ public sealed record GcuSnapshot
     public int? Mode { get; init; }
     public int? CpuFanRpm { get; init; }
     public int? GpuFanRpm { get; init; }
+    // Some firmware identifies fan numbers without assigning them to a processor.
+    public int? Fan1Rpm { get; init; }
+    public int? Fan2Rpm { get; init; }
+    public int? NumberedFanCount { get; init; }
+    public DateTimeOffset? Fan1UpdatedAt { get; init; }
+    public DateTimeOffset? Fan2UpdatedAt { get; init; }
     public int? CpuFanDuty { get; init; }
     public int? GpuFanDuty { get; init; }
     public int? CpuTemperature { get; init; }
@@ -92,10 +98,13 @@ public sealed record GcuSnapshot
 
     public bool IsStatusFresh(DateTimeOffset? now = null) =>
         Mode.HasValue && IsAc.HasValue && Fresh(ModeUpdatedAt, now) && Fresh(IsAcUpdatedAt, now);
+    public bool IsModeFresh(DateTimeOffset? now = null) => Mode.HasValue && Fresh(ModeUpdatedAt, now);
     public bool IsFanFresh(DateTimeOffset? now = null) =>
         (IsCpuFanFresh(now) || IsCpuFanDutyFresh(now)) && (IsGpuFanFresh(now) || IsGpuFanDutyFresh(now));
     public bool IsCpuFanFresh(DateTimeOffset? now = null) => CpuFanRpm.HasValue && Fresh(CpuFanUpdatedAt, now);
     public bool IsGpuFanFresh(DateTimeOffset? now = null) => GpuFanRpm.HasValue && Fresh(GpuFanUpdatedAt, now);
+    public bool IsFan1Fresh(DateTimeOffset? now = null) => Fan1Rpm.HasValue && Fresh(Fan1UpdatedAt, now);
+    public bool IsFan2Fresh(DateTimeOffset? now = null) => Fan2Rpm.HasValue && Fresh(Fan2UpdatedAt, now);
     public bool IsCpuFanDutyFresh(DateTimeOffset? now = null) => CpuFanDuty.HasValue && Fresh(CpuFanDutyUpdatedAt, now);
     public bool IsGpuFanDutyFresh(DateTimeOffset? now = null) => GpuFanDuty.HasValue && Fresh(GpuFanDutyUpdatedAt, now);
     public bool IsCpuTemperatureFresh(DateTimeOffset? now = null) => CpuTemperature.HasValue && Fresh(CpuTemperatureUpdatedAt, now);

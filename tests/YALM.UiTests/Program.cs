@@ -23,6 +23,9 @@ internal static partial class Program
             CheckDiagnostics();
             CheckBridgePackages(args);
             CheckPlatforms(args);
+            CheckRemainingWorkers(args);
+            CheckNativeHardware();
+            CheckNativeDisplay();
             CheckMenuSafety();
             CheckQuickSwitches(args.Contains("--render"));
             CheckTrayLifecycle();

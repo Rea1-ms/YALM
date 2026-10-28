@@ -61,6 +61,11 @@ internal static class MechrevoProbe
 
         MachineInfo machine = await GcuPlatformDiscovery.DiscoverAsync(MachineInfo.Read(), Logger.WriteLine);
         GcuConnectionOptions? options = GcuConnectionDiscovery.Find(machine, out string? discoveryFailure, Logger.WriteLine);
+        if (options is null && !GcuEnvironment.HasOverrides && !machine.HasVerifiedBoard)
+        {
+            NativeHardwareReader? native = await NativeHardwareReader.DiscoverAsync(machine, Logger.WriteLine);
+            if (native is not null) return await RunNativeAsync(native, machine, outputPath, captureSeconds);
+        }
         var samples = new List<object>();
         var curves = new List<object>();
         var frames = new ConcurrentDictionary<string, JsonElement>();
@@ -184,6 +189,50 @@ internal static class MechrevoProbe
             TelemetryFrames = frames
         };
         await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        return complete && error is null && samples.Count > 0 ? 0 : 1;
+    }
+
+    private static async Task<int> RunNativeAsync(NativeHardwareReader reader, MachineInfo machine,
+        string outputPath, int captureSeconds)
+    {
+        var samples = new List<GcuSnapshot>();
+        bool complete = false;
+        string? error = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(captureSeconds + 15));
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            do
+            {
+                GcuSnapshot snapshot = await reader.ReadAsync(timeout.Token);
+                samples.Add(snapshot);
+                complete |= reader.IsComplete(snapshot);
+                if (clock.Elapsed.TotalSeconds >= captureSeconds) break;
+                await Task.Delay(TimeSpan.FromSeconds(3), timeout.Token);
+            } while (!timeout.IsCancellationRequested);
+        }
+        catch (OperationCanceledException) { error = "读取超时。"; }
+        catch (Exception ex)
+        {
+            error = "独立接口状态读取失败。";
+            Logger.WriteLine(error + MechrevoDiagnostics.ExceptionSummary(ex));
+        }
+        await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(new
+        {
+            RecordedAt = DateTimeOffset.Now,
+            ReadOnly = true,
+            CaptureSeconds = captureSeconds,
+            SampleIntervalSeconds = 3,
+            Machine = machine,
+            TelemetryScope = reader.DisplayName,
+            ControlSupported = false,
+            EcProtectionSupported = false,
+            ExtendedEcDiagnosticsSupported = false,
+            CompleteTelemetryReceived = complete,
+            CompletenessMeaning = "仅检查此接口已核对的读取字段，不代表整机遥测或保护状态完整。",
+            Error = error,
+            Samples = samples
+        }, new JsonSerializerOptions { WriteIndented = true }));
         return complete && error is null && samples.Count > 0 ? 0 : 1;
     }
 

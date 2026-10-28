@@ -308,8 +308,9 @@ internal sealed partial class MechrevoForm
 
     private OverlayReadings ReadOverlay()
     {
-        GcuSnapshot snapshot = _controller?.Snapshot ?? new();
-        EcFanSnapshot? ec = _ecSnapshot;
+        GcuSnapshot snapshot = DisplaySnapshot ?? new();
+        if (!snapshot.IsConnected) snapshot = new();
+        EcFanSnapshot? ec = _nativeReader is null ? _ecSnapshot : null;
         return new()
         {
             CpuTemperature = snapshot.IsCpuTemperatureFresh() ? snapshot.CpuTemperature : null,
