@@ -41,7 +41,9 @@ internal sealed partial class MechrevoForm : RForm
     private bool _closing;
     private bool _allowClose;
     private EcFanSnapshot? _ecSnapshot;
-    private ArmouryConflictDetector.Status? _armouryConflict;
+    private MechrevoControlConflictDetector.Status? _mechrevoControlConflict;
+    private Func<MechrevoControlConflictDetector.Status> _readControlConflict = () => MechrevoControlConflictDetector.Read();
+    private string? _loggedControlConflict;
 
     public MechrevoForm(MachineInfo machine, bool demo = false, bool smokeTest = false, bool startupTest = false)
     {
@@ -171,7 +173,6 @@ internal sealed partial class MechrevoForm : RForm
     private async void OnShown(object? sender, EventArgs e)
     {
         StartTray();
-        await DetectArmouryConflictAsync();
         if (_closing) return;
         _refreshTimer.Start();
         if (!_demo && _machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
@@ -195,6 +196,7 @@ internal sealed partial class MechrevoForm : RForm
         {
             MechrevoDiagnostics.WriteStartup(_machine, DeviceDpi);
             _diagnosticsStarted = true;
+            RefreshMachineBlockReason();
             LoadConnectionEnvironment();
             RenderSnapshot();
         }
@@ -277,17 +279,17 @@ internal sealed partial class MechrevoForm : RForm
         }
     }
 
-    private async Task DetectArmouryConflictAsync()
+    private MechrevoControlConflictDetector.Status RefreshControlConflict()
     {
-        if (_demo || _closing) return;
-        ArmouryConflictDetector.Status status = await Task.Run(() => ArmouryConflictDetector.Read(), _lifetime.Token);
-        if (_closing) return;
-        _armouryConflict = status;
-        Logger.WriteLine($"奥创冲突检测：ArmouryCrate.Service={status.ArmouryCrateService}；LightingService={status.LightingService}");
-        if (status.IsConflict)
-            ShowActionStatus("检测到奥创控制服务正在运行，可能与 YALM 冲突；请关闭奥创后重试。");
-        RefreshMachineBlockReason();
-        RenderSnapshot();
+        MechrevoControlConflictDetector.Status status = _readControlConflict();
+        _mechrevoControlConflict = status;
+        if (_diagnosticsStarted && _loggedControlConflict != status.LogSummary)
+        {
+            _loggedControlConflict = status.LogSummary;
+            Logger.WriteLine(status.LogSummary);
+            Logger.WriteLine(status.BlockReason ?? "未检测到当前会话的控制界面冲突，写入仍按机型许可与实时状态判断。");
+        }
+        return status;
     }
 
     private async Task RefreshAsync()
@@ -511,7 +513,12 @@ internal sealed partial class MechrevoForm : RForm
             : snapshot?.IsConnected == true ? "已连接本机服务"
             : !string.IsNullOrWhiteSpace(snapshot?.LastError) ? "连接不可用：" + SafeMessage(snapshot.LastError)
             : _connectionDiscoveryFailure ?? "尚未连接";
-        _connectionStatus.Text = DateTimeOffset.UtcNow < _actionMessageUntil ? _actionMessage : connection;
+        // Keep the restriction visible even when connection/status messages arrive later.
+        string? restriction = _demo ? null : _mechrevoControlConflict?.StatusText ??
+            (_nativeReader is null && _machine.SupportsModeControl && snapshot?.IsConnected == true &&
+                _controller?.WritePermissionAvailable == true && !HasWritePermission
+                ? "当前只读，请在更多设置中确认允许写入。" : null);
+        _connectionStatus.Text = restriction ?? (DateTimeOffset.UtcNow < _actionMessageUntil ? _actionMessage : connection);
         _connectionStatus.AccessibleName = _connectionStatus.Text;
         _keyboardTips.SetToolTip(_connectionStatus,
             string.Join("\n", new[] { connection, _controlMessage, _actionMessage }.Where(text => !string.IsNullOrWhiteSpace(text))));

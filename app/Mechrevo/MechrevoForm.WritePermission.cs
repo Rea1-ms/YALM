@@ -40,10 +40,10 @@ internal sealed partial class MechrevoForm
 
     private string? CurrentMachineBlockReason()
     {
+        MechrevoControlConflictDetector.Status conflict = RefreshControlConflict();
+        if (conflict.BlockReason is { } blockReason) return blockReason;
         if (_nativeReader is not null) return "此接口已接入状态读取，控制功能尚未开放。";
-        if (_armouryConflict?.IsConflict == true)
-            return "检测到奥创控制服务正在运行，可能与 YALM 冲突；请关闭奥创后重试。";
-        string? reason = _machine.GetModeControlBlockReason();
+        string? reason = _machine.GetModeControlBlockReason(conflict);
         if (reason is not null) return reason;
         if (_controller?.Snapshot.IsConnected == true && !HasWritePermission)
             return "此机型未实机验证，当前默认只读；请在“更多设置”中确认允许写入。";
@@ -52,9 +52,9 @@ internal sealed partial class MechrevoForm
 
     private string? CurrentCustomControlBlockReason()
     {
-        if (_armouryConflict?.IsConflict == true)
-            return "检测到奥创控制服务正在运行，可能与 YALM 冲突；请关闭奥创后重试。";
-        string? reason = _machine.GetCustomControlBlockReason();
+        MechrevoControlConflictDetector.Status conflict = RefreshControlConflict();
+        if (conflict.BlockReason is { } blockReason) return blockReason;
+        string? reason = _machine.GetCustomControlBlockReason(conflict);
         if (reason is not null) return reason;
         if (_controller?.Snapshot.IsConnected == true && !HasWritePermission)
             return "当前连接未允许写入，请在“更多设置”中确认允许写入。";

@@ -1,5 +1,4 @@
 using Microsoft.Win32;
-using System.Diagnostics;
 
 namespace YALM.Mechrevo;
 
@@ -201,57 +200,14 @@ internal sealed record MachineInfo(string Manufacturer, string Model, string Bio
         return null;
     }
 
-    public string? GetModeControlBlockReason()
+    public string? GetModeControlBlockReason(MechrevoControlConflictDetector.Status? conflict = null)
     {
         if (!SupportsModeControl)
             return "尚未识别到已适配的硬件协议，当前仅查看状态。";
 
-        try
-        {
-            var running = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            var unableToInspect = false;
-            foreach (var process in Process.GetProcesses())
-            {
-                using (process)
-                {
-                    try
-                    {
-                        var name = process.ProcessName;
-                        if (IsCompetingControlApp(name)) running.Add(name);
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // A process that exited during enumeration cannot compete for control.
-                    }
-                    catch
-                    {
-                        unableToInspect = true;
-                    }
-                }
-            }
-
-            if (running.Count > 0)
-                return $"检测到其他控制界面：{string.Join("、", running)}。请先退出该界面再切换模式。";
-            if (unableToInspect)
-                return "暂时无法确认其他控制界面的运行状态，已暂停模式切换。";
-            return null;
-        }
-        catch
-        {
-            return "无法检查其他控制界面，当前仅查看状态。";
-        }
+        return (conflict ?? MechrevoControlConflictDetector.Read()).BlockReason;
     }
 
-    public string? GetCustomControlBlockReason() => !SupportsCustomControl
-        ? "此协议尚未适配自定义设置，当前仅查看。" : GetModeControlBlockReason();
-
-    private static bool IsCompetingControlApp(string name) =>
-        name.Equals("L-Mechrevo", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("LMechrevo", StringComparison.OrdinalIgnoreCase) ||
-        name.Contains("ControlCenter", StringComparison.OrdinalIgnoreCase) ||
-        name.Contains("GamingCenter", StringComparison.OrdinalIgnoreCase) ||
-        // The original UWP app leaves this full-trust tray process running.
-        name.Equals("SystrayComponent", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("RevoHelper", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("MechrevoControl", StringComparison.OrdinalIgnoreCase);
+    public string? GetCustomControlBlockReason(MechrevoControlConflictDetector.Status? conflict = null) => !SupportsCustomControl
+        ? "此协议尚未适配自定义设置，当前仅查看。" : GetModeControlBlockReason(conflict);
 }

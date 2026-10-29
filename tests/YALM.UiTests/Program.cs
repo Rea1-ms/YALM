@@ -37,6 +37,7 @@ internal static partial class Program
                 return 0;
             }
             CheckDiagnostics();
+            CheckControlConflicts();
             CheckBridgePackages(args);
             CheckPlatforms(args);
             CheckRemainingWorkers(args);

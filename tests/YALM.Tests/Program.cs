@@ -24,6 +24,7 @@ internal static partial class Program
             ("Yilong modes and field freshness", YilongModesAndFieldFreshness),
             ("Yilong invalid values stay unknown", YilongInvalidValuesStayUnknown),
             ("unreviewed platforms reject all writes", PlatformPolicyRejectsWritesDespiteFreshStatus),
+            ("Mechrevo control center conflict detection", MechrevoControlConflictDetection),
             ("read-only platforms retain status refresh", PlatformPolicyKeepsReadOnlyRefreshes),
             ("platform permissions are independent", PlatformPolicyCapabilitiesRemainIndependent),
             ("reconnection replaces platform permissions", PlatformPolicyReplacesPermissionsOnReconnect),
