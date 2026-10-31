@@ -83,6 +83,8 @@ internal sealed partial class CustomModeForm
         root.Controls.Add(_status, 0, 1);
         root.SetColumnSpan(_status, 2);
         Controls.Add(root);
+        MechrevoUi.SizeCompactButtons(this, _activateProfile, _refresh, _fanBoost,
+            _tccEnabled, _fanSwitchEnabled, _applyCpuCurve, _applyGpuCurve);
         SelectPage("CPU");
     }
 
@@ -99,7 +101,7 @@ internal sealed partial class CustomModeForm
             () => _controller.SetCustomFieldAsync(GcuCustomWriteField.TccEnabled, Snapshot.CustomSettings?.TccEnabled == true ? 0 : 1, _lifetime.Token));
         AddRow(layout, _tccEnabled);
         AddRow(layout, InfoLabel("调整后点击对应的应用按钮。功耗范围以本机服务回报为准。"));
-        return ScrollPage(layout);
+        return ContentPage(layout);
     }
 
     private Control BuildGpuPage()
@@ -109,7 +111,7 @@ internal sealed partial class CustomModeForm
         _readonlyValues.MaximumSize = new Size(265, 0);
         AddRow(layout, _readonlyValues);
         AddRow(layout, InfoLabel("当前仅查看 GPU 参数。"));
-        return ScrollPage(layout);
+        return ContentPage(layout);
     }
 
     private Control BuildAdvancedPage()
@@ -133,14 +135,14 @@ internal sealed partial class CustomModeForm
         AddRow(layout, falling);
         AddRow(layout, InfoLabel("停转阈值只在降温视图显示。同温度的两个节点表示转速跳变。"));
         AddRow(layout, InfoLabel("温度点由固件固定；拖动节点调整百分比，悬停查看温度。左右键选点，上下键微调，按住上档键每次调整 5%。应用后才写入。"));
-        return ScrollPage(layout);
+        return ContentPage(layout);
     }
 
     private void AddPage(TableLayoutPanel nav, string title, Control page)
     {
         int index = _navigation.Count;
         var button = ActionButton(title, RForm.colorStandard);
-        button.Height = 34;
+        MechrevoUi.SizeCompactButtons(this, button);
         button.Dock = DockStyle.Fill;
         button.Click += (_, _) => SelectPage(title);
         nav.Controls.Add(button, index, 0);
@@ -171,9 +173,10 @@ internal sealed partial class CustomModeForm
         };
         var apply = ActionButton("应用", RForm.colorStandard);
         apply.Width = 56;
-        apply.Height = 30;
+        MechrevoUi.SizeCompactButtons(this, apply);
         apply.AccessibleName = "应用" + title;
-        var heading = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 8, 0, 0) };
+        var heading = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 3, Margin = new Padding(0, 4, 0, 0) };
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62));
@@ -182,9 +185,10 @@ internal sealed partial class CustomModeForm
         heading.Controls.Add(apply, 2, 0);
         var slider = new RTrackBar
         {
-            Minimum = 0, Maximum = 1000, Dock = DockStyle.Top, Height = 34,
-            AutoSize = false, TickStyle = TickStyle.None, AccessibleName = title,
-            Margin = new Padding(0, 0, 0, 10)
+            Minimum = 0, Maximum = 1000, Dock = DockStyle.Top, AutoSize = false,
+            Height = (int)Math.Round(48F * DeviceDpi / 192F),
+            TickStyle = TickStyle.None, AccessibleName = title,
+            Margin = new Padding(0, 0, 0, 4)
         };
         input.ValueChanged += (_, _) => slider.Value = Math.Clamp((int)input.Value, slider.Minimum, slider.Maximum);
         slider.ValueChanged += (_, _) =>
@@ -202,14 +206,26 @@ internal sealed partial class CustomModeForm
 
     private static TableLayoutPanel PageLayout()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Margin = Padding.Empty };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, Margin = Padding.Empty };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return layout;
     }
 
-    private static Panel ScrollPage(Control content)
+    private void FitPages()
     {
-        var panel = new Panel { AutoScroll = true, Padding = new Padding(0, 0, 6, 0) };
+        PerformLayout();
+        // All tabs share the height of the tallest page, so switching tabs does
+        // not resize the window or hide controls below the visible area.
+        int height = _navigation.Values.Max(entry => entry.Page.Controls[0]
+            .GetPreferredSize(new Size(entry.Page.ClientSize.Width, 0)).Height);
+        ClientSize = new Size(ClientSize.Width,
+            Math.Max(560, ClientSize.Height + height - _pages.ClientSize.Height));
+    }
+
+    private static Panel ContentPage(Control content)
+    {
+        var panel = new Panel();
         panel.Controls.Add(content);
         return panel;
     }

@@ -54,6 +54,7 @@ internal static partial class Program
             Application.DoEvents();
             CheckCompactHeadings(main, "reopened window");
         }
+        CheckChildWindowLayouts(main, render);
         Call(main, "ExitApplication");
     }
 

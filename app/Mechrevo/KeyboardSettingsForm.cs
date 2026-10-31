@@ -25,12 +25,14 @@ internal sealed class KeyboardSettingsForm : RForm
         Icon = MechrevoUi.AppIcon;
         Font = new Font("Microsoft YaHei UI", 9F);
         AutoScaleMode = AutoScaleMode.Dpi;
+        FormBorderStyle = FormBorderStyle.FixedSingle;
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         MinimumSize = new Size(460, 0);
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
         Padding = new Padding(12);
+        _status.MinimumSize = new Size(0, Font.Height * 2);
         var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Margin = Padding.Empty };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddRow(root, new Label { Text = "按 1 → 6 顺序循环，点击色块选择颜色。", AutoSize = true, Margin = new Padding(4, 8, 4, 12) });

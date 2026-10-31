@@ -87,6 +87,13 @@ namespace GHelper
                     "当前显示已接入的温度、实际转速、占用和电量；缺失读数留空。";
             }
 
+            panelSliders.AutoSize = true;
+            panelSliders.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            labelHotkeys.MaximumSize = new Size(panelHotkeys.ClientSize.Width - labelHotkeys.Left * 2, 0);
+            panelHotkeys.Height = labelHotkeys.Bottom + labelHotkeys.Top;
+            ClientSize = new Size(ClientSize.Width,
+                Controls.Cast<Control>().Sum(control => control.Height) + Padding.Vertical);
+
             buttonLight.BorderColor = colorEco;
             buttonDefault.BorderColor = colorStandard;
             buttonFull.BorderColor = colorTurbo;

@@ -516,6 +516,7 @@ namespace GHelper
             //
             AutoScaleDimensions = new SizeF(192F, 192F);
             AutoScaleMode = AutoScaleMode.Dpi;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
             ClientSize = new Size(900, 675);
             Controls.Add(panelToggles);
             Controls.Add(panelHotkeys);

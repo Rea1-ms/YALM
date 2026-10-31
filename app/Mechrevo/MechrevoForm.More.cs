@@ -41,8 +41,10 @@ internal sealed partial class MechrevoForm
             Icon = MechrevoUi.AppIcon;
             Font = main.Font;
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(500, 350);
-            MinimumSize = new Size(460, 350);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            MinimumSize = new Size(420, 0);
             StartPosition = FormStartPosition.Manual;
             MaximizeBox = MinimizeBox = false;
             Padding = new Padding(12);
@@ -126,9 +128,7 @@ internal sealed partial class MechrevoForm
             MechrevoUi.SizeCompactButtons(this, overlay);
             overlay.Click += (_, _) => main.OpenOverlayConfig();
             AddRow(root, overlay);
-            var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-            scroll.Controls.Add(root);
-            Controls.Add(scroll);
+            Controls.Add(root);
             InitTheme(true);
             FormClosing += (_, e) =>
             {
@@ -283,7 +283,6 @@ internal sealed partial class MechrevoForm
         private void PositionBesideMain()
         {
             Rectangle area = Screen.FromControl(_main).WorkingArea;
-            Height = Math.Min(Height, area.Height - 20);
             int left = _main.Left - Width - 5;
             if (left < area.Left) left = Math.Min(_main.Right + 5, area.Right - Width);
             Location = new Point(Math.Max(area.Left, left),

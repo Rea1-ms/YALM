@@ -57,12 +57,13 @@ internal sealed partial class CustomModeForm : RForm
         Icon = MechrevoUi.AppIcon;
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
-        ClientSize = new Size(850, 710);
-        MinimumSize = new Size(820, 650);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        ClientSize = new Size(800, 600);
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
         Padding = new Padding(10);
+        _status.MinimumSize = new Size(0, Font.Height * 2);
 
         BuildLayout();
         InitTheme(true);
@@ -81,6 +82,7 @@ internal sealed partial class CustomModeForm : RForm
         };
         FormClosed += OnClosed;
         RenderSnapshot(loadEditors: false);
+        FitPages();
     }
 
     private async Task RefreshCustomAsync(bool reloadEditors)
