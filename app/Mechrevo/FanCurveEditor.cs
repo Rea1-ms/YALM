@@ -31,7 +31,10 @@ internal sealed class FanCurveEditor : UserControl
     public void AddCornerControl(Control control)
     {
         control.Location = new Point(4, 4);
-        _chart.Controls.Add(control);
+        // Match the upstream fan panel: overlay options are chart siblings,
+        // inheriting the window background instead of the chart background.
+        Controls.Add(control);
+        control.BringToFront();
     }
 
     public void ApplyThemeColors()

@@ -52,7 +52,12 @@ internal sealed partial class CustomModeForm
         heading.Controls.Add(_activateProfile, 2, 0);
         right.Controls.Add(heading, 0, 0);
 
-        var snap = new RCheckBox { Text = "对齐网格", Checked = true, AutoSize = true, Margin = new Padding(4, 2, 4, 0) };
+        var snap = new RCheckBox
+        {
+            Text = "对齐网格", Checked = true, AutoSize = true,
+            Font = new Font("Segoe UI", 8F), Padding = new Padding(4, 1, 1, 1),
+            TabStop = false, UseVisualStyleBackColor = false
+        };
         snap.CheckedChanged += (_, _) => _cpuCurve.SnapToGrid = _gpuCurve.SnapToGrid = snap.Checked;
         _cpuCurve.AddCornerControl(snap);
         right.Controls.Add(_cpuCurve, 0, 1);
