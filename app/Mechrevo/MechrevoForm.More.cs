@@ -14,14 +14,14 @@ internal sealed partial class MechrevoForm
             Min = 0, Max = 4, Step = 1, Value = 0,
             Dock = DockStyle.Fill, Margin = Padding.Empty, TabStop = true
         };
-        private readonly CheckBox _writePermission = new()
+        private readonly CheckBox _writePermission = new QuickSettingCheckBox
         {
             AutoCheck = false, AutoSize = true, ThreeState = false,
             Margin = new Padding(4, 4, 4, 4)
         };
         private readonly Dictionary<GcuQuickSetting, CheckBox> _quickSettings = new();
         private readonly ToolTip _tips = new();
-        private readonly CheckBox _startup = new()
+        private readonly CheckBox _startup = new QuickSettingCheckBox
         {
             Text = "开机自启动", AutoSize = true, AutoCheck = false, ThreeState = true,
             Margin = new Padding(4, 4, 4, 4), AccessibleName = "开机自启动"
@@ -101,7 +101,7 @@ internal sealed partial class MechrevoForm
             _tips.SetToolTip(_quickSettings[GcuQuickSetting.TouchpadHotkey], "控制触摸板切换热键；不会直接开关触摸板设备");
             _tips.SetToolTip(_quickSettings[GcuQuickSetting.UsbCharging], "允许关机／休眠时为支持的接口供电");
             _tips.SetToolTip(_quickSettings[GcuQuickSetting.AcRecovery], "关机后由未接电变为接电时自动开机");
-            var topmost = new CheckBox
+            var topmost = new QuickSettingCheckBox
             {
                 Text = "窗口置顶", AutoSize = true, Checked = main.TopMost,
                 Margin = new Padding(4, 4, 4, 4)

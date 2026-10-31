@@ -30,6 +30,12 @@ internal static partial class Program
             }
             Logger.appPath = Path.GetFullPath(".cache/service-logging-20261026/logs");
             Logger.logFile = Path.Combine(Logger.appPath, "log.txt");
+            if (args.Contains("--theme-only"))
+            {
+                CheckDisabledControlThemes(args.Contains("--render"));
+                Console.WriteLine($"PASS: {_checks} disabled control rendering checks");
+                return 0;
+            }
             CheckStartup();
             if (args.Contains("--startup-integration")) CheckStartupIntegration();
             if (args.Contains("--startup-only"))
@@ -43,6 +49,7 @@ internal static partial class Program
                 Console.WriteLine($"PASS: {_checks} offline window layout checks");
                 return 0;
             }
+            CheckDisabledControlThemes(args.Contains("--render"));
             CheckDiagnostics();
             CheckControlConflicts();
             CheckBridgePackages(args);
