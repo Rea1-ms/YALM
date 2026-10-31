@@ -59,13 +59,14 @@ internal static class MechrevoProgram
         bool smokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase);
         bool startupTest = args.Contains("--startup-test", StringComparer.OrdinalIgnoreCase);
         bool demo = smokeTest || args.Contains("--demo", StringComparer.OrdinalIgnoreCase);
+        bool autoStart = args.Contains(MechrevoStartup.Argument, StringComparer.OrdinalIgnoreCase);
         InitializeUi();
 
         using var singleInstance = new Mutex(true,
             demo ? InstanceMutex + ".Demo" : InstanceMutex, out bool ownsMutex);
         if (!ownsMutex)
         {
-            if (!smokeTest && !startupTest)
+            if (!smokeTest && !startupTest && !autoStart)
             {
                 try
                 {
@@ -87,6 +88,7 @@ internal static class MechrevoProgram
             MachineInfo machine = MachineInfo.Read();
             using var form = new MechrevoForm(machine, demo, smokeTest, startupTest);
             form.SetActivationSignal(activationSignal);
+            if (autoStart && !demo && !startupTest) form.StartInTray();
             Application.Run(form);
             return 0;
         }

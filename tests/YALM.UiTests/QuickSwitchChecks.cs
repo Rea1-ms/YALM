@@ -40,9 +40,9 @@ internal static partial class Program
                 keyboardTitle.Parent.Right <= headerButtons[0].Left,
                 "keyboard title remains complete beside the content-sized switches");
             var checks = Get<Dictionary<GcuQuickSetting, CheckBox>>(more, "_quickSettings");
-            Require(checks.Count == 5 && Descendants(more).OfType<CheckBox>().Count() == 7 &&
+            Require(checks.Count == 5 && Descendants(more).OfType<CheckBox>().Count() == 8 &&
                 Descendants(more).OfType<CheckBox>().Any(check => check.Text.StartsWith("允许写入", StringComparison.Ordinal)),
-                "other contains five vendor switches, write permission and topmost");
+                "other contains five vendor switches, write permission, topmost and startup");
             CheckBox[] otherChecks = Descendants(more).OfType<CheckBox>().ToArray();
             for (int index = 0; index < otherChecks.Length; index++)
             {

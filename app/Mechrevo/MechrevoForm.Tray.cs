@@ -18,6 +18,7 @@ internal sealed partial class MechrevoForm
     private bool _exitRequested;
     private bool _trayStarted;
     private bool _trayDisposed;
+    private bool _startInTray;
     private bool _bwTrayIcon = AppConfig.IsBWIcon();
     private Icon? _ownedTrayIcon;
     private (GpuDisplayRoute Route, bool Monochrome, bool Dark)? _trayIconKey;
@@ -92,6 +93,30 @@ internal sealed partial class MechrevoForm
     }
 
     internal void SetActivationSignal(EventWaitHandle signal) => _activationSignal = signal;
+
+    internal void StartInTray()
+    {
+        _startInTray = true;
+        Opacity = 0;
+        ShowInTaskbar = false;
+    }
+
+    private void CompleteTrayStartup()
+    {
+        if (!_startInTray) return;
+        _startInTray = false;
+        // If the shell cannot accept the icon, keep the window accessible.
+        HideToTray();
+        Opacity = 1;
+        bool restoreHotkey = _overlayHotkey;
+        if (restoreHotkey)
+        {
+            UnregisterHotKey(Handle, OverlayHotkeyId);
+            _overlayHotkey = false;
+        }
+        ShowInTaskbar = true;
+        if (restoreHotkey) RegisterOverlayHotkey();
+    }
 
     private void CheckTraySignals()
     {

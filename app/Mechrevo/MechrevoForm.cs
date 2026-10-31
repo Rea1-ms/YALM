@@ -173,6 +173,7 @@ internal sealed partial class MechrevoForm : RForm
     private async void OnShown(object? sender, EventArgs e)
     {
         StartTray();
+        CompleteTrayStartup();
         if (_closing) return;
         _refreshTimer.Start();
         if (!_demo && _machine.SupportsEcTelemetry) _ecRefreshTimer.Start();
@@ -183,6 +184,12 @@ internal sealed partial class MechrevoForm : RForm
             OpenMoreSettings();
             OpenOverlayConfig();
         }
+        if (!_demo && !_startupTest)
+        {
+            try { await Task.Run(() => new MechrevoStartup().CheckPath()); }
+            catch (Exception error) { MechrevoStartup.LogFailure(error); }
+        }
+        if (_closing) return;
         await RefreshGpuRouteAsync();
         if (_closing) return;
         if (!_demo) await ConnectAsync();

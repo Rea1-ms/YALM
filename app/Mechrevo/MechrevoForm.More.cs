@@ -21,6 +21,15 @@ internal sealed partial class MechrevoForm
         };
         private readonly Dictionary<GcuQuickSetting, CheckBox> _quickSettings = new();
         private readonly ToolTip _tips = new();
+        private readonly CheckBox _startup = new()
+        {
+            Text = "开机自启动", AutoSize = true, AutoCheck = false, ThreeState = true,
+            Margin = new Padding(4, 4, 4, 4), AccessibleName = "开机自启动"
+        };
+        private bool _startupBusy;
+        private bool? _startupEnabled;
+        private Func<bool> _readStartup = () => new MechrevoStartup().IsScheduled();
+        private Func<bool, bool> _setStartup = enabled => new MechrevoStartup().SetEnabled(enabled);
         private bool _brightnessDirty;
         private bool _rendering;
 
@@ -101,6 +110,13 @@ internal sealed partial class MechrevoForm
                 if (!main._demo) AppConfig.Set("topmost", topmost.Checked ? 1 : 0);
             };
             AddRow(root, topmost);
+            _startup.Enabled = !main._demo && !main._startupTest;
+            _startup.CheckState = _startup.Enabled ? CheckState.Indeterminate : CheckState.Unchecked;
+            _tips.SetToolTip(_startup, _startup.Enabled
+                ? "当前用户登录后隐藏到托盘；不自动切换性能模式"
+                : "演示和启动自检不修改登录自启动");
+            _startup.Click += async (_, _) => await UpdateStartupAsync(change: true);
+            AddRow(root, _startup);
             var overlay = new RButton
             {
                 Text = "屏幕叠加设置", Margin = new Padding(2), BorderColor = Color.Transparent,
@@ -121,7 +137,53 @@ internal sealed partial class MechrevoForm
                 Hide();
             };
             Shown += (_, _) => PositionBesideMain();
+            VisibleChanged += async (_, _) =>
+            {
+                if (Visible) await UpdateStartupAsync(change: false);
+            };
             RefreshState();
+        }
+
+        private async Task UpdateStartupAsync(bool change)
+        {
+            if (_startupBusy || _main._demo || _main._startupTest || IsDisposed) return;
+            _startupBusy = true;
+            _startup.Enabled = false;
+            bool writing = change && _startupEnabled.HasValue;
+            bool target = _startupEnabled != true;
+            try
+            {
+                _startupEnabled = await Task.Run(() => writing ? _setStartup(target) : _readStartup());
+                if (IsDisposed) return;
+                _tips.SetToolTip(_startup, "当前用户登录后隐藏到托盘；不自动切换性能模式");
+            }
+            catch (Exception error)
+            {
+                MechrevoStartup.LogFailure(error);
+                _startupEnabled = null;
+                if (writing)
+                {
+                    try { _startupEnabled = await Task.Run(_readStartup); }
+                    catch (Exception readError) { MechrevoStartup.LogFailure(readError); }
+                }
+                if (IsDisposed) return;
+                string message = writing ? "开机自启动未能修改，请检查系统任务计划程序或以管理员身份运行后重试。"
+                    : "开机自启动状态暂时无法读取，点击重试。";
+                _tips.SetToolTip(_startup, message);
+                _main.ShowActionStatus(message);
+            }
+            finally
+            {
+                _startupBusy = false;
+                if (!IsDisposed)
+                {
+                    _startup.CheckState = _startupEnabled is null ? CheckState.Indeterminate
+                        : _startupEnabled == true ? CheckState.Checked : CheckState.Unchecked;
+                    _startup.AccessibleName = "开机自启动：" + (_startupEnabled is null ? "未确认"
+                        : _startupEnabled == true ? "已开启" : "已关闭");
+                    _startup.Enabled = true;
+                }
+            }
         }
 
         public void RefreshState()

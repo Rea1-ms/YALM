@@ -199,7 +199,10 @@ internal static partial class Program
     {
         Type machineType = MainForm.Assembly.GetType("YALM.Mechrevo.MachineInfo")!;
         object machine = Activator.CreateInstance(machineType, "MECHREVO", "Offline native display", "", "Unknown board")!;
-        return (Form)Activator.CreateInstance(MainForm, machine, false, false, false)!;
+        var form = (Form)Activator.CreateInstance(MainForm, machine, false, false, false)!;
+        SetControlConflict(form, []);
+        Call(form, "RefreshMachineBlockReason");
+        return form;
     }
 
     private static object InspectNativeDisplayReader(NativeDisplayBackend backend)

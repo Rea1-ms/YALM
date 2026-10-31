@@ -30,6 +30,13 @@ internal static partial class Program
             }
             Logger.appPath = Path.GetFullPath(".cache/service-logging-20261026/logs");
             Logger.logFile = Path.Combine(Logger.appPath, "log.txt");
+            CheckStartup();
+            if (args.Contains("--startup-integration")) CheckStartupIntegration();
+            if (args.Contains("--startup-only"))
+            {
+                Console.WriteLine($"PASS: {_checks} startup checks");
+                return 0;
+            }
             CheckMainLayout(args.Contains("--render"));
             if (args.Contains("--layout-only"))
             {
@@ -58,7 +65,10 @@ internal static partial class Program
     {
         Type machineType = typeof(GcuController).Assembly.GetType("YALM.Mechrevo.MachineInfo")!;
         object machine = Activator.CreateInstance(machineType, "MECHREVO", "Offline test", "", "GM6PX0X")!;
-        return (Form)Activator.CreateInstance(MainForm, machine, demo, smoke, startup)!;
+        var form = (Form)Activator.CreateInstance(MainForm, machine, demo, smoke, startup)!;
+        SetControlConflict(form, []);
+        Call(form, "RefreshMachineBlockReason");
+        return form;
     }
 
     private static void CheckMenuSafety()
