@@ -34,19 +34,8 @@
     <None Remove="logs\**" />
   </ItemGroup>
 
-  <!-- The product is now Mechrevo-only. Keep the archived upstream ASUS
-       implementation out of the active assembly while retaining the source
-       snapshot in .cache/asus_backup for reference. -->
-  <ItemGroup>
-    <Compile Remove="Program.cs;Asus*.cs;Extra*.cs;Fans*.cs;Handheld*.cs;HardwareControl.cs;Matrix*.cs;NativeMethods.cs;Settings*.cs;Slash*.cs;Updates*.cs" />
-    <EmbeddedResource Remove="Asus*.resx;Extra*.resx;Fans*.resx;Handheld*.resx;Matrix*.resx;Settings*.resx;Slash*.resx;Updates*.resx" />
-    <Compile Remove="Ally\**;AnimeMatrix\**;AutoUpdate\**;Battery\**;Fan\**;Gpu\**;Input\**;Mode\**;Pawn\**;Peripherals\**;USB\**" />
-    <Compile Remove="Display\**;Helpers\**" />
-    <Compile Include="Display\DisplayNative.cs" />
-    <Compile Include="Helpers\Drawing.cs;Helpers\Logger.cs;Helpers\MemoryHelper.cs;Helpers\OSDBase.cs;Helpers\ProcessHelper.cs" />
-  </ItemGroup>
-
-
+  <!-- Unused upstream files are archived in .cache/g-helper-archive.
+       Shared UI and YALM sources remain in the application directory. -->
   <ItemGroup>
     <EmbeddedResource Include="Mechrevo\Updates\ApplyUpdate.ps1" LogicalName="YALM.ApplyUpdate.ps1" />
     <Content Include="favicon.ico">
@@ -55,10 +44,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FftSharp" Version="2.2.0" />
-    <PackageReference Include="HidSharpCore" Version="1.3.0" />
-    <PackageReference Include="NAudio.Wasapi" Version="2.4.0" />
-    <PackageReference Include="NvAPIWrapper.Net" Version="0.8.1.101" />
     <PackageReference Include="System.Management" Version="10.0.12" />
     <PackageReference Include="TaskScheduler" Version="2.12.2" />
     <PackageReference Include="WinForms.DataVisualization" Version="1.10.2" />
@@ -76,27 +61,6 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Strings.resx</DependentUpon>
     </Compile>
-    <Compile Update="Properties\Settings.Designer.cs">
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Settings.settings</DependentUpon>
-    </Compile>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="Properties\Settings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Pawn\RyzenSMU.bin">
-      <LogicalName>GHelper.RyzenSMU.bin</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Pawn\IntelMSR.bin">
-      <LogicalName>GHelper.IntelMSR.bin</LogicalName>
-    </EmbeddedResource>
   </ItemGroup>
 
   <!-- 构建、发布不停止任何正在运行的控制台，也不调用外部脚本。 -->
