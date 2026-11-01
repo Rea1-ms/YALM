@@ -4,6 +4,8 @@
 
 **[下载单文件版](https://github.com/Rea1-ms/YALM/releases/latest/download/YALM.exe) · [压缩包与发布说明](https://github.com/Rea1-ms/YALM/releases/latest) · [反馈问题](https://github.com/Rea1-ms/YALM/issues) · [常见问题](#常见问题)**
 
+![主界面与更多设置](docs/screenshots/main-and-settings.png)
+
 > [!IMPORTANT]
 > 目前仍需保留适配的机械革命控制中心后台服务及驱动。使用助手时，请退出官方控制中心的窗口和托盘，避免多个控制界面同时修改设置。各项功能的可用范围取决于机型和固件。
 
@@ -17,6 +19,14 @@
 - **常用设置**：功能键提示、数字键盘锁定、触摸板切换键、关机供电、来电自动开机和窗口置顶。
 - **托盘与自启**：关闭窗口后保留托盘；右键可访问常用功能，支持登录后隐藏启动。
 - **程序更新**：自动检查正式发布版，确认后下载并重启，也可从托盘手动检查。
+
+### 风扇与功耗
+
+![自定义风扇曲线与功耗设置](docs/screenshots/fan-and-power.png)
+
+### 屏幕叠加
+
+![屏幕叠加设置](docs/screenshots/overlay.png)
 
 ## 下载与使用
 
