@@ -20,7 +20,7 @@
 
 ## 下载与使用
 
-1. 下载 [YALM.exe（单文件程序）](https://github.com/Rea1-ms/YALM/releases/latest/download/YALM.exe)，保存到一个固定目录，无需解压。也可以从[发布页面](https://github.com/Rea1-ms/YALM/releases/latest)选择压缩包。
+1. 下载 [YALM.exe（单文件程序）](https://github.com/Rea1-ms/YALM/releases/latest/download/YALM.exe)，保存到一个固定目录，无需解压。也可以从[发布页面](https://github.com/Rea1-ms/YALM/releases/latest)下载压缩包，解压后同样只有这一个程序。
 2. 使用 64 位 Windows（操作系统），并安装 [.NET 10 Desktop Runtime（桌面运行时）](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0) 的 x64（64 位）版本。
 3. 退出官方控制中心及其托盘，保留后台服务和驱动，然后运行 `YALM.exe`（助手程序）。程序会自动尝试连接本机服务，无需手动填写连接资料或以管理员身份运行。
 
@@ -89,7 +89,7 @@ dotnet run --project tests/YALM.UiTests/YALM.UiTests.csproj -c Release
 .\Publish.ps1
 ```
 
-打包脚本通过离线演示自检后，在 `artifacts/portable`（便携版输出目录）同时生成 `YALM.exe`（单文件程序）和 `YALM-win-x64.zip`（分发压缩包）。使用 Rider（开发工具）时，也可以选择“一键打包”运行配置。
+打包脚本通过离线演示自检后，在 `artifacts/portable`（便携版输出目录）同时生成 `YALM.exe`（单文件程序）和 `YALM-win-x64.zip`（分发压缩包）；压缩包内仅包含同一个单文件程序。使用 Rider（开发工具）时，也可以选择“一键打包”运行配置。
 
 协议分析和历史验证资料保存在 `docs`（文档目录）。
 

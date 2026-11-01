@@ -33,18 +33,12 @@ try {
         throw "演示自检失败，退出码：$($taskSmoke.ExitCode)；记录：$taskStage"
     }
 
-    # 分发内容使用明确清单，不将缓存、配置或凭据打入压缩包。
-    $taskFiles = @($taskExe)
-    foreach ($taskName in @('LICENSE', 'NOTICE.md', 'README.md')) {
-        $taskCopy = Join-Path $taskStandalone $taskName
-        Copy-Item -LiteralPath (Join-Path $taskRoot $taskName) -Destination $taskCopy
-        $taskFiles += $taskCopy
-    }
+    # 压缩包与独立下载提供同一个单文件程序。
     $taskZip = Join-Path $taskStage 'YALM-win-x64.zip'
-    Compress-Archive -LiteralPath $taskFiles -DestinationPath $taskZip
+    Compress-Archive -LiteralPath $taskExe -DestinationPath $taskZip
 
     New-Item -ItemType Directory -Path $taskOutput -Force | Out-Null
-    Copy-Item -LiteralPath $taskFiles -Destination $taskOutput -Force
+    Copy-Item -LiteralPath $taskExe -Destination $taskOutput -Force
     Copy-Item -LiteralPath $taskZip -Destination $taskOutput -Force
     $taskResult = Get-Item -LiteralPath (Join-Path $taskOutput 'YALM.exe')
     Write-Output "单文件发布完成：$($taskResult.FullName)（$([math]::Round($taskResult.Length / 1MB, 2)) MiB，兆字节）"
