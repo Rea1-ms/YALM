@@ -13,6 +13,9 @@
     <None Include="Fixtures\keyboard-saved-effects.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="KeyboardColorTests.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="UpdateTests.cs" />
+    <Compile Include="..\..\app\Mechrevo\Updates\MechrevoRelease.cs" Link="Updates\MechrevoRelease.cs" />
+    <Compile Include="..\..\app\Mechrevo\Updates\MechrevoUpdateClient.cs" Link="Updates\MechrevoUpdateClient.cs" />
     <Compile Include="PeripheralTests.cs" />
     <Compile Include="GpuModeTests.cs" />
     <Compile Include="QuickSettingsTests.cs" />

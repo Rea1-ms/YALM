@@ -65,6 +65,7 @@ internal sealed partial class MechrevoForm
         });
         _trayOverlay = Add("屏幕叠加", ToggleOverlay);
         _trayGameOnly = Add("仅在游戏中显示叠加", ToggleOverlayGameOnly);
+        Add("检查程序更新…", async () => { ShowMainWindow(); await CheckUpdatesAsync(manual: true); });
         _trayMenu.Items.Add(new ToolStripSeparator());
         Add("退出", ExitApplication);
         _trayMenu.Opening += (_, e) =>
@@ -298,6 +299,7 @@ internal sealed partial class MechrevoForm
             _refreshTimer.Dispose();
             _ecRefreshTimer.Dispose();
             _smokeTimer.Dispose();
+            _updateTimer.Dispose();
             _lifetime.Dispose();
             _keyboardTips.Dispose();
         }

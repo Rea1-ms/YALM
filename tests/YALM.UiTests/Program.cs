@@ -36,6 +36,12 @@ internal static partial class Program
                 Console.WriteLine($"PASS: {_checks} disabled control rendering checks");
                 return 0;
             }
+            CheckUpdates(args);
+            if (args.Contains("--updates-only"))
+            {
+                Console.WriteLine($"PASS: {_checks} program update checks");
+                return 0;
+            }
             CheckStartup();
             if (args.Contains("--startup-integration")) CheckStartupIntegration();
             if (args.Contains("--startup-only"))

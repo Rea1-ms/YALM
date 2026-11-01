@@ -48,6 +48,7 @@
 
 
   <ItemGroup>
+    <EmbeddedResource Include="Mechrevo\Updates\ApplyUpdate.ps1" LogicalName="YALM.ApplyUpdate.ps1" />
     <Content Include="favicon.ico">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Content>

@@ -13,6 +13,10 @@ internal static partial class Program
     {
         var tests = new (string Name, Func<Task> Run)[]
         {
+            ("update versions and portable release assets", UpdateVersionsAndAssets),
+            ("updates reject untrusted metadata", UpdateRejectsUntrustedMetadata),
+            ("update HTTP failures and cancellation", UpdateHttpFailuresAndCancellation),
+            ("update packages are verified before extraction", UpdatePackagesAreVerifiedBeforeExtraction),
             ("Jiaolong requests contain only reviewed reads", JiaolongRequestsAreReadOnly),
             ("Jiaolong readings map and expire independently", JiaolongReadingsMapAndExpireIndependently),
             ("Jiaolong invalid replies stay unknown", JiaolongInvalidRepliesStayUnknown),

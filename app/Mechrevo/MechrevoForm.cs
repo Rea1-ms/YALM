@@ -161,6 +161,7 @@ internal sealed partial class MechrevoForm : RForm
         quit.Click += (_, _) => ExitApplication();
         footer.Controls.Add(quit, 1, 0);
         AddRow(layout, footer);
+        BuildUpdateLayout(layout);
         Controls.Add(layout);
     }
 
@@ -190,6 +191,7 @@ internal sealed partial class MechrevoForm : RForm
             catch (Exception error) { MechrevoStartup.LogFailure(error); }
         }
         if (_closing) return;
+        StartUpdateChecks();
         await RefreshGpuRouteAsync();
         if (_closing) return;
         if (!_demo) await ConnectAsync();
@@ -558,6 +560,7 @@ internal sealed partial class MechrevoForm : RForm
         _refreshTimer.Stop();
         _ecRefreshTimer.Stop();
         _smokeTimer.Stop();
+        _updateTimer.Stop();
         _lifetime.Cancel();
         try
         {
@@ -576,6 +579,7 @@ internal sealed partial class MechrevoForm : RForm
             _refreshTimer.Dispose();
             _ecRefreshTimer.Dispose();
             _smokeTimer.Dispose();
+            _updateTimer.Dispose();
             _lifetime.Dispose();
             _connectionOptions = null;
             _allowClose = true;

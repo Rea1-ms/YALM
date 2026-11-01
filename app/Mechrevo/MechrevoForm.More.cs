@@ -119,6 +119,19 @@ internal sealed partial class MechrevoForm
                 : "演示和启动自检不修改登录自启动");
             _startup.Click += async (_, _) => await UpdateStartupAsync(change: true);
             AddRow(root, _startup);
+            var updates = new QuickSettingCheckBox
+            {
+                Text = "自动检查更新", AutoSize = true, Checked = !AppConfig.Is("skip_updates"),
+                Enabled = main.UpdatesEnabled, Margin = new Padding(4, 4, 4, 4)
+            };
+            updates.CheckedChanged += (_, _) =>
+            {
+                if (main.UpdatesEnabled) AppConfig.Set("skip_updates", updates.Checked ? 0 : 1);
+            };
+            AddRow(root, updates);
+            var releases = new LinkLabel { Text = "查看发布说明", AutoSize = true, Margin = new Padding(4) };
+            releases.LinkClicked += (_, _) => OpenReleasesPage();
+            AddRow(root, releases);
             var overlay = new RButton
             {
                 Text = "屏幕叠加设置", Margin = new Padding(2), BorderColor = Color.Transparent,
